@@ -55,15 +55,15 @@ fitbuddy/
 
 | #  | Phase              | Key concepts                                                        | Weeks | Done |
 |----|--------------------|---------------------------------------------------------------------|-------|------|
-| 0  | Setup              | Monorepo, git, Node native TS, env files, ESLint, Prettier          | 1     | [ ]  |
-| 1  | HTTP + Express     | Request/response, routing, middleware, REST design, status codes, env validation, logging (pino) | 1 | [ ] |
+| 0  | Setup              | Monorepo, git, Node native TS, env files, ESLint, Prettier          | 1     | [x]  |
+| 1  | HTTP + Express     | Request/response, routing, middleware, REST design, status codes, env validation, logging (pino), Vitest + Supertest basics | 1 | [ ] |
 | 2  | Database           | Postgres in Docker, schema design, Prisma, migrations, relations    | 2     | [ ]  |
-| 3  | Authentication     | bcrypt, JWT access + refresh tokens, rotation, logout, email verification, password reset, Google + Apple sign-in | 3 | [ ] |
+| 3  | Authentication     | bcrypt, JWT access + refresh tokens, rotation, logout, email verification, password reset | 2 | [ ] |
 | 4  | User management    | Profiles, roles (RBAC), admin routes, Zod validation, error handling, account deletion, OpenAPI docs | 2 | [ ] |
-| 5  | Mobile ↔ API       | Axios, React Query, secure-store, biometric unlock                  | 1     | [ ]  |
-| 6  | Testing            | Unit + integration tests (Vitest), Supertest, test database         | 1     | [ ]  |
+| 5  | Mobile ↔ API       | Axios, React Query, secure-store, Expo SDK upgrade + dev build, biometric unlock, Google + Apple sign-in | 2 | [ ] |
+| 6  | Testing            | Test database, integration test patterns, mocking external services, coverage | 1 | [ ] |
 | 7  | File uploads       | Avatars, multer, S3/Cloudinary, signed URLs                         | 1     | [ ]  |
-| 8  | Health data        | Dev build, Health Connect / HealthKit, sync API, bulk inserts, time-series queries, indexes | 3 | [ ] |
+| 8  | Health data        | Health Connect / HealthKit, sync API, bulk inserts, time-series queries, indexes | 3 | [ ] |
 | 9  | Real-time chat     | Socket.io, rooms, socket auth, message storage, presence, typing    | 3     | [ ]  |
 | 10 | Push notifications | Expo push, device tokens, background jobs (BullMQ + Redis), scheduling | 2  | [ ]  |
 | 11 | Caching basics     | Redis cache, rate limiting, pagination, N+1 queries                 | 1     | [ ]  |
@@ -109,10 +109,15 @@ Scale the same FitBuddy app. Use k6 to generate real load, watch it break, fix i
 - Apple requires **Sign in with Apple** if the app offers other social logins (e.g. Google).
 - Security is practiced in every phase (validation, auth checks, no secrets in git); Phase 14 is the hardening pass.
 - Node native TypeScript only strips types. If a tool (e.g. generated Prisma client) needs non-erasable syntax, fall back to `tsx`.
-- Every phase ends with something working, tested, and committed.
+- Type stripping: no `enum`, `namespace`, or constructor parameter properties. Use `as const` objects instead of enums. Imports need the `.ts` extension; type-only imports use `import type`.
+- TypeScript 6+ no longer auto-loads `@types/*` — list them in tsconfig (`"types": ["node"]`).
+- TypeScript pinned to `~6.0`: typescript-eslint doesn't support TS 7 yet. Upgrade when it does.
+- Mobile started on Expo SDK 57 (Expo Go). Upgrade the SDK before creating the dev build in Phase 5.
+- Git: one branch per phase → PR → squash and merge into `main`.
+- Every phase ends with something working, tested, and committed. Write a few Vitest/Supertest tests in every phase from Phase 1 on.
 
 ## Progress Log
 
 | Date | Phase | Notes |
 |------|-------|-------|
-|      |       |       |
+| 2026-10-29 | 0 | Setup done: server (Node 24 native TS, env, ESLint, Prettier) + mobile (Expo SDK 57) on iOS + Android. TS pinned to 6.0 for typescript-eslint. Learned: embedded git repo (160000) fix, enum vs `as const`, squash merge. |
