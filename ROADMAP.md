@@ -57,7 +57,7 @@ fitbuddy/
 |----|--------------------|---------------------------------------------------------------------|-------|------|
 | 0  | Setup              | Monorepo, git, Node native TS, env files, ESLint, Prettier          | 1     | [x]  |
 | 1  | HTTP + Express     | Request/response, routing, middleware, REST design, status codes, env validation, logging (pino), Vitest + Supertest basics | 1 | [x] |
-| 2  | Database           | Postgres in Docker, schema design, Prisma, migrations, relations    | 2     | [ ]  |
+| 2  | Database           | Postgres in Docker, schema design, Prisma, migrations, relations    | 2     | [x]  |
 | 3  | Authentication     | bcrypt, JWT access + refresh tokens, rotation, logout, email verification, password reset | 2 | [ ] |
 | 4  | User management    | Profiles, roles (RBAC), admin routes, Zod validation, error handling, account deletion, OpenAPI docs | 2 | [ ] |
 | 5  | Mobile ↔ API       | Axios, React Query, secure-store, Expo SDK upgrade + dev build, biometric unlock, Google + Apple sign-in | 2 | [ ] |
@@ -108,7 +108,7 @@ Scale the same FitBuddy app. Use k6 to generate real load, watch it break, fix i
 - App Store and Play Store require in-app **account deletion**.
 - Apple requires **Sign in with Apple** if the app offers other social logins (e.g. Google).
 - Security is practiced in every phase (validation, auth checks, no secrets in git); Phase 14 is the hardening pass.
-- Node native TypeScript only strips types. If a tool (e.g. generated Prisma client) needs non-erasable syntax, fall back to `tsx`.
+- Node native TypeScript only strips types. If a tool needs non-erasable syntax, fall back to `tsx`. (Prisma 7's generated client works natively with `importFileExtension = "ts"`.)
 - Type stripping: no `enum`, `namespace`, or constructor parameter properties. Use `as const` objects instead of enums. Imports need the `.ts` extension; type-only imports use `import type`.
 - TypeScript 6+ no longer auto-loads `@types/*` — list them in tsconfig (`"types": ["node"]`).
 - TypeScript pinned to `~6.0`: typescript-eslint doesn't support TS 7 yet. Upgrade when it does.
@@ -117,6 +117,12 @@ Scale the same FitBuddy app. Use k6 to generate real load, watch it break, fix i
 - Config: read env only through `src/env.ts` (Zod, fail fast). Secrets get no default. `NODE_ENV` = development | test | production; deploy target (staging/prod) goes in a separate `APP_ENV` (Phase 15).
 - Logging: use `logger` / `req.log` (pino), never `console.*` (except `env.ts`, which runs before the logger exists). Log IDs, not contents — never passwords, tokens, or health data.
 - API docs (OpenAPI + Swagger UI) come in Phase 4, generated from the Zod schemas.
+- Prisma pinned to `7.10.1` (exact). npm's `latest` tag for `prisma` pointed at an 8.0 release candidate — always check what `latest` is before installing.
+- Migrations: edit `schema.prisma` → `npm run db:migrate -- --name x` → read the SQL → commit it. Never edit an applied migration or change the DB by hand (drift). Prod uses `migrate deploy` only. Adding a required column to a table with data: dev = clear the data; prod = expand → backfill → contract.
+- Every query on user-owned data filters by owner (`where: { id, userId }`) — no IDOR. Someone else's row returns the same 404 as a missing one.
+- Let DB constraints decide races: catch Prisma `P2025` (not found → 404), `P2002` (unique → 409), `P2003` (foreign key → 404) instead of checking first.
+- Tests use a separate `fitbuddy_test` database (created + migrated by `src/test/globalSetup.ts`, emptied before each test).
+- Agent safety hooks block `DROP`/destructive DB commands — run those yourself.
 - Every phase ends with something working, tested, and committed. Write a few Vitest/Supertest tests in every phase from Phase 1 on.
 
 ## Progress Log
@@ -125,3 +131,4 @@ Scale the same FitBuddy app. Use k6 to generate real load, watch it break, fix i
 |------|-------|-------|
 | 2026-10-29 | 0 | Setup done: server (Node 24 native TS, env, ESLint, Prettier) + mobile (Expo SDK 57) on iOS + Android. TS pinned to 6.0 for typescript-eslint. Learned: embedded git repo (160000) fix, enum vs `as const`, squash merge. |
 | 2026-10-30 | 1 | Express workouts CRUD (in-memory), validation, 404 + error middleware, Zod env validation, pino logging (request IDs, redact, LOG_LEVEL), Vitest + Supertest (33 tests). Switched to "theory → I do → you do → review". Learned: type guards with `unknown`, middleware order, `ERR_HTTP_HEADERS_SENT`, fail-fast config, structured logs, one PR per phase. |
+| 2026-10-30 | 2 | Postgres 18 in Docker Compose (volume, healthcheck), SQL by hand in psql, Prisma 7 (schema, 2 migrations, pg adapter, singleton client), workouts in Postgres, User 1→N Workout (FK index, cascade delete), nested routes `/users/:userId/workouts`, test DB (60 tests incl. IDOR + cascade). Learned: SQL CRUD + constraints, `;` in psql, ORDER BY tie-breakers, normalization, foreign keys, ON DELETE options, indexes, SQL injection, P2025/P2002/P2003, IDOR. |
