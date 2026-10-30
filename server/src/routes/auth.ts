@@ -6,12 +6,19 @@ import {
   isValidPassword,
   verifyPassword,
 } from '../lib/password.ts';
+import {
+  hashRefreshToken,
+  issueRefreshToken,
+  revokeFamily,
+  rotateRefreshToken,
+} from '../lib/refreshTokens.ts';
 import { signAccessToken } from '../lib/tokens.ts';
 import {
   isUniqueViolation,
   isValidEmail,
   isValidName,
 } from '../lib/validation.ts';
+import { authUser, requireAuth } from '../middleware/requireAuth.ts';
 
 const router = Router();
 
@@ -93,10 +100,86 @@ router.post('/login', async (req, res) => {
   // We asked for the hash, so strip it ourselves before responding.
   const { passwordHash, ...safeUser } = user;
 
-  // The app stores this (expo-secure-store) and sends it on every request:
-  // `Authorization: Bearer <accessToken>`.
+  // The app stores both in expo-secure-store.
+  // accessToken: sent on every request (`Authorization: Bearer ...`), 15 min.
+  // refreshToken: sent ONLY to /auth/refresh and /auth/logout, 30 days.
+  // Each login starts a new token family (one per device/session).
   const accessToken = await signAccessToken(user.id);
-  res.json({ user: safeUser, accessToken });
+  const refreshToken = await issueRefreshToken(user.id);
+  res.json({ user: safeUser, accessToken, refreshToken });
+});
+
+// POST /api/v1/auth/refresh
+// Access token expired -> the app trades its refresh token for a new pair.
+// No requireAuth: the access token is expired, that's why we're here.
+router.post('/refresh', async (req, res) => {
+  // In the body, not a header: request bodies are never logged (app.ts).
+  const { refreshToken } = req.body ?? {};
+
+  if (typeof refreshToken !== 'string' || refreshToken === '') {
+    res.status(400).json({ error: 'refreshToken is required' });
+    return;
+  }
+
+  const result = await rotateRefreshToken(refreshToken);
+
+  if (!result.ok) {
+    // Reuse = a copy of the token exists somewhere = likely theft. Worth a
+    // warning in the logs. Never log the token itself.
+    if (result.reason === 'reused') {
+      req.log.warn('refresh token reuse detected, family revoked');
+    } else {
+      req.log.debug({ reason: result.reason }, 'refresh rejected');
+    }
+    // One answer for every failure: the client just logs the user out.
+    res.status(401).json({ error: 'Invalid refresh token' });
+    return;
+  }
+
+  // The OLD refresh token is now dead: the app must save the new one.
+  const accessToken = await signAccessToken(result.userId);
+  res.json({ accessToken, refreshToken: result.refreshToken });
+});
+
+// POST /api/v1/auth/logout
+// Logs out THIS device: revokes the refresh token's whole family, so no
+// token from this login (current or older) can be refreshed again.
+// No requireAuth: the access token may already be expired — logout must
+// still work. The refresh token itself proves which session to end.
+router.post('/logout', async (req, res) => {
+  const { refreshToken } = req.body ?? {};
+
+  if (typeof refreshToken !== 'string' || refreshToken === '') {
+    res.status(400).json({ error: 'refreshToken is required' });
+    return;
+  }
+
+  const row = await prisma.refreshToken.findUnique({
+    where: { tokenHash: hashRefreshToken(refreshToken) },
+  });
+  if (row) await revokeFamily(row.familyId);
+
+  // Always 204, even for an unknown or already-revoked token: logout never
+  // reveals whether a token was valid, and the app clears its storage anyway.
+  // The access token stays valid until it expires (max 15 min) — the app
+  // deletes it from secure-store.
+  res.status(204).send();
+});
+
+// POST /api/v1/auth/logout-all
+// "Log out everywhere": revokes every refresh token of the user, on every
+// device. Needs a valid access token: we must know WHO, and only the
+// account owner may do this.
+router.post('/logout-all', requireAuth, async (req, res) => {
+  const userId = authUser(req).id;
+
+  // One UPDATE ... WHERE user_id = $1 (uses the @@index([userId])).
+  await prisma.refreshToken.updateMany({
+    where: { userId, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+
+  res.status(204).send();
 });
 
 export default router;

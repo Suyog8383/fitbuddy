@@ -4,6 +4,7 @@ import { prisma } from '../db.ts';
 // Each test starts with empty tables -> tests can't affect each other.
 // Children first, then parents (a workout can't exist without its user).
 beforeEach(async () => {
+  await prisma.refreshToken.deleteMany();
   await prisma.workout.deleteMany();
   await prisma.user.deleteMany();
 });
