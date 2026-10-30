@@ -7,4 +7,13 @@ export default defineConfig(
   js.configs.recommended,
   tseslint.configs.recommended,
   prettier,
+  {
+    rules: {
+      // `_name` = unused on purpose (e.g. Express error handler's `next`).
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_' },
+      ],
+    },
+  },
 );

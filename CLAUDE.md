@@ -4,7 +4,8 @@ I'm a React Native/Expo developer learning backend (Node.js) by building this ap
 Full plan and progress: see ROADMAP.md. Read it at session start and tell me the current phase.
 
 ## How we work
-- I write the code; you review, point out issues, and fix only when I ask.
+- Teaching style "I do, you do": for each new concept, you write one example (with short comments explaining it), then I write the next similar piece myself and you review it.
+- Outside those examples, you review, point out issues, and fix only when I ask.
 - Short explanations only. No deep theory unless I ask.
 - ~6 hrs/week. One phase or sub-phase per session.
 - Each phase: short concept note → task list → "done when" checklist → review.
