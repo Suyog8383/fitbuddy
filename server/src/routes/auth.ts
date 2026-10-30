@@ -12,6 +12,7 @@ import {
 } from '../lib/refreshTokens.ts';
 import { HttpError, parse } from '../lib/http.ts';
 import { signAccessToken } from '../lib/tokens.ts';
+import { toUserResponse } from '../lib/userResponse.ts';
 import { isUniqueViolation } from '../lib/validation.ts';
 import { authUser, requireAuth } from '../middleware/requireAuth.ts';
 import {
@@ -90,7 +91,7 @@ router.post('/register', async (req, res) => {
     req.log.error({ err }, 'verification email failed');
   }
 
-  res.status(201).json(user);
+  res.status(201).json(toUserResponse(user));
 });
 
 // POST /api/v1/auth/login
@@ -101,6 +102,7 @@ router.post('/login', async (req, res) => {
   const user = await prisma.user.findUnique({
     where: { email },
     omit: { passwordHash: false },
+    include: { profile: true }, // the app gets the full user right away
   });
 
   // ALWAYS run bcrypt, even with no user — skipping it would answer
@@ -115,16 +117,14 @@ router.post('/login', async (req, res) => {
     throw new HttpError(401, 'Invalid email or password');
   }
 
-  // We asked for the hash, so strip it ourselves before responding.
-  const { passwordHash, ...safeUser } = user;
-
   // The app stores both in expo-secure-store.
   // accessToken: sent on every request (`Authorization: Bearer ...`), 15 min.
   // refreshToken: sent ONLY to /auth/refresh and /auth/logout, 30 days.
   // Each login starts a new token family (one per device/session).
   const accessToken = await signAccessToken(user.id);
   const refreshToken = await issueRefreshToken(user.id);
-  res.json({ user: safeUser, accessToken, refreshToken });
+  // toUserResponse is an allowlist: the hash we asked for never leaves.
+  res.json({ user: toUserResponse(user), accessToken, refreshToken });
 });
 
 // POST /api/v1/auth/refresh
