@@ -87,6 +87,37 @@ describe('POST /api/v1/auth/register', () => {
     expect(res.status).toBe(400);
   });
 
+  it('lists every bad field at once', async () => {
+    const res = await request(app).post(REGISTER).send(undefined);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Invalid request');
+    expect(res.body.details.map((d: { path: string }) => d.path)).toEqual([
+      'email',
+      'name',
+      'password',
+    ]);
+  });
+
+  // Mass assignment: extra fields in the body must never reach the DB.
+  it('ignores fields it does not know (emailVerifiedAt, passwordHash)', async () => {
+    const res = await request(app)
+      .post(REGISTER)
+      .send({
+        ...valid,
+        emailVerifiedAt: '2020-01-01T00:00:00.000Z',
+        passwordHash: 'attacker-chosen-hash',
+      });
+
+    expect(res.status).toBe(201);
+    const stored = await prisma.user.findUniqueOrThrow({
+      where: { id: res.body.id },
+      omit: { passwordHash: false },
+    });
+    expect(stored.emailVerifiedAt).toBeNull();
+    expect(stored.passwordHash).not.toBe('attacker-chosen-hash');
+  });
+
   it('accepts a 72-byte password with spaces', async () => {
     const password = 'a b '.repeat(18); // 72 bytes, spaces kept as-is
     const res = await request(app)
@@ -503,7 +534,10 @@ describe('email verification', () => {
     const res = await verify(auth, code);
 
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: 'code must be 6 digits' });
+    expect(res.body).toEqual({
+      error: 'Invalid request',
+      details: [{ path: 'code', message: expect.any(String) }],
+    });
   });
 
   it('returns 401 without an access token', async () => {

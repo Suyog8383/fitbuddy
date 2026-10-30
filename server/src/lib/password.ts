@@ -11,14 +11,6 @@ export const PASSWORD_MIN_CHARS = 8;
 // passwords instead of truncating them without telling the user.
 export const PASSWORD_MAX_BYTES = 72;
 
-export function isValidPassword(v: unknown): v is string {
-  return (
-    typeof v === 'string' &&
-    v.length >= PASSWORD_MIN_CHARS &&
-    Buffer.byteLength(v, 'utf8') <= PASSWORD_MAX_BYTES
-  );
-}
-
 // bcrypt generates a random salt and stores it inside the returned string:
 // "$2b$12$<22-char salt><31-char hash>". Async: runs on a worker thread,
 // so the ~250 ms doesn't block other requests.

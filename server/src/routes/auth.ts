@@ -3,25 +3,25 @@ import { prisma } from '../db.ts';
 import { EmailCodePurpose } from '../generated/prisma/client.ts';
 import { CODE_TTL_MINUTES, consumeCode, issueCode } from '../lib/emailCodes.ts';
 import { sendEmail } from '../lib/email.ts';
-import {
-  DUMMY_HASH,
-  hashPassword,
-  isValidPassword,
-  verifyPassword,
-} from '../lib/password.ts';
+import { DUMMY_HASH, hashPassword, verifyPassword } from '../lib/password.ts';
 import {
   hashRefreshToken,
   issueRefreshToken,
   revokeFamily,
   rotateRefreshToken,
 } from '../lib/refreshTokens.ts';
+import { HttpError, parse } from '../lib/http.ts';
 import { signAccessToken } from '../lib/tokens.ts';
-import {
-  isUniqueViolation,
-  isValidEmail,
-  isValidName,
-} from '../lib/validation.ts';
+import { isUniqueViolation } from '../lib/validation.ts';
 import { authUser, requireAuth } from '../middleware/requireAuth.ts';
+import {
+  ForgotPasswordBody,
+  LoginBody,
+  RefreshBody,
+  RegisterBody,
+  ResetPasswordBody,
+  VerifyEmailBody,
+} from '../schemas/auth.ts';
 
 const router = Router();
 
@@ -56,81 +56,50 @@ async function sendCodeEmail(
   });
 }
 
-// Exactly 6 digits, as a string ("000042" keeps its zeros; a number wouldn't).
-const isCodeFormat = (code: unknown): code is string =>
-  typeof code === 'string' && /^\d{6}$/.test(code);
-const invalidCode = { error: 'Invalid or expired code' };
+// Wrong, expired, used, out of attempts, unknown email — one answer for all.
+const invalidCode = () => new HttpError(400, 'Invalid or expired code');
+const unauthorized = () => new HttpError(401, 'Unauthorized');
 
 // POST /api/v1/auth/register
 router.post('/register', async (req, res) => {
-  const { email, name, password } = req.body ?? {};
+  // Typed + cleaned (trimmed, email lowercased, unknown keys dropped).
+  // Invalid -> throws -> 400 with every bad field (errorHandler).
+  const { email, name, password } = parse(RegisterBody, req.body);
 
-  if (!isValidEmail(email)) {
-    res.status(400).json({ error: 'email must be a valid email address' });
-    return;
-  }
-  if (!isValidName(name)) {
-    res.status(400).json({ error: 'name must be a non-empty string' });
-    return;
-  }
-  if (!isValidPassword(password)) {
-    res.status(400).json({
-      error: 'password must be at least 8 characters and at most 72 bytes',
-    });
-    return;
-  }
-
-  // Note: no trim on the password — spaces are valid characters in it.
   const passwordHash = await hashPassword(password);
 
   // Let the UNIQUE constraint catch duplicate emails (P2002), no check first.
-  try {
-    // The returned user has no passwordHash (omitted by default, db.ts).
-    const user = await prisma.user.create({
-      data: {
-        // Lowercase: "Suyog@Mail.com" and "suyog@mail.com" are one inbox.
-        email: email.trim().toLowerCase(),
-        name: name.trim(),
-        passwordHash,
-      },
+  // The returned user has no passwordHash (omitted by default, db.ts).
+  const user = await prisma.user
+    .create({ data: { email, name, passwordHash } })
+    .catch((err) => {
+      if (isUniqueViolation(err)) {
+        // Reveals that the email is registered (enumeration) — accepted:
+        // forgot-password (the endpoint attackers probe) hides it, and
+        // rate limiting (Phase 11) slows bulk probing.
+        throw new HttpError(409, 'Email already in use');
+      }
+      throw err; // anything else is a bug -> 500
     });
 
-    // The account exists even if the email fails: log it and still answer
-    // 201. The app shows "verify your email" with a "resend code" button.
-    // Own try/catch, so a send error never reaches the P2002 check below.
-    try {
-      await sendCodeEmail(user, EmailCodePurpose.EMAIL_VERIFICATION);
-    } catch (err) {
-      req.log.error({ err }, 'verification email failed');
-    }
-
-    res.status(201).json(user);
+  // The account exists even if the email fails: log it and still answer
+  // 201. The app shows "verify your email" with a "resend code" button.
+  try {
+    await sendCodeEmail(user, EmailCodePurpose.EMAIL_VERIFICATION);
   } catch (err) {
-    if (isUniqueViolation(err)) {
-      // Reveals that the email is registered (enumeration) — accepted:
-      // forgot-password (the endpoint attackers probe) hides it, and
-      // rate limiting (Phase 11) slows bulk probing.
-      res.status(409).json({ error: 'Email already in use' });
-      return;
-    }
-    throw err;
+    req.log.error({ err }, 'verification email failed');
   }
+
+  res.status(201).json(user);
 });
 
 // POST /api/v1/auth/login
 router.post('/login', async (req, res) => {
-  const { email, password } = req.body ?? {};
-
-  // Only check the shape here. No length rules: a login must accept
-  // whatever was valid at register time, even if the rules change later.
-  if (typeof email !== 'string' || typeof password !== 'string') {
-    res.status(400).json({ error: 'email and password are required' });
-    return;
-  }
+  const { email, password } = parse(LoginBody, req.body);
 
   // The one place that asks for the hidden hash.
   const user = await prisma.user.findUnique({
-    where: { email: email.trim().toLowerCase() },
+    where: { email },
     omit: { passwordHash: false },
   });
 
@@ -143,8 +112,7 @@ router.post('/login', async (req, res) => {
 
   if (!user || !passwordOk) {
     // One message for both cases: never say which part was wrong.
-    res.status(401).json({ error: 'Invalid email or password' });
-    return;
+    throw new HttpError(401, 'Invalid email or password');
   }
 
   // We asked for the hash, so strip it ourselves before responding.
@@ -164,12 +132,7 @@ router.post('/login', async (req, res) => {
 // No requireAuth: the access token is expired, that's why we're here.
 router.post('/refresh', async (req, res) => {
   // In the body, not a header: request bodies are never logged (app.ts).
-  const { refreshToken } = req.body ?? {};
-
-  if (typeof refreshToken !== 'string' || refreshToken === '') {
-    res.status(400).json({ error: 'refreshToken is required' });
-    return;
-  }
+  const { refreshToken } = parse(RefreshBody, req.body);
 
   const result = await rotateRefreshToken(refreshToken);
 
@@ -182,8 +145,7 @@ router.post('/refresh', async (req, res) => {
       req.log.debug({ reason: result.reason }, 'refresh rejected');
     }
     // One answer for every failure: the client just logs the user out.
-    res.status(401).json({ error: 'Invalid refresh token' });
-    return;
+    throw new HttpError(401, 'Invalid refresh token');
   }
 
   // The OLD refresh token is now dead: the app must save the new one.
@@ -197,12 +159,7 @@ router.post('/refresh', async (req, res) => {
 // No requireAuth: the access token may already be expired — logout must
 // still work. The refresh token itself proves which session to end.
 router.post('/logout', async (req, res) => {
-  const { refreshToken } = req.body ?? {};
-
-  if (typeof refreshToken !== 'string' || refreshToken === '') {
-    res.status(400).json({ error: 'refreshToken is required' });
-    return;
-  }
+  const { refreshToken } = parse(RefreshBody, req.body);
 
   const row = await prisma.refreshToken.findUnique({
     where: { tokenHash: hashRefreshToken(refreshToken) },
@@ -236,19 +193,11 @@ router.post('/logout-all', requireAuth, async (req, res) => {
 // Logged in: the access token says WHO, the code proves they own the inbox.
 router.post('/verify-email', requireAuth, async (req, res) => {
   const userId = authUser(req).id;
-  const { code } = req.body ?? {};
-
-  if (!isCodeFormat(code)) {
-    res.status(400).json({ error: 'code must be 6 digits' });
-    return;
-  }
+  const { code } = parse(VerifyEmailBody, req.body);
 
   const user = await prisma.user.findUnique({ where: { id: userId } });
-  if (!user) {
-    // Valid token, deleted account (see users.ts).
-    res.status(401).json({ error: 'Unauthorized' });
-    return;
-  }
+  // Valid token, deleted account (see users.ts).
+  if (!user) throw unauthorized();
   // Idempotent: verifying twice is not an error, there's just nothing to do.
   if (user.emailVerifiedAt) {
     res.status(204).send();
@@ -274,11 +223,7 @@ router.post('/verify-email', requireAuth, async (req, res) => {
     return ok;
   });
 
-  if (!verified) {
-    // Wrong, expired, used, out of attempts — one answer for all.
-    res.status(400).json(invalidCode);
-    return;
-  }
+  if (!verified) throw invalidCode();
 
   res.status(204).send();
 });
@@ -290,10 +235,7 @@ router.post('/resend-verification', requireAuth, async (req, res) => {
   const user = await prisma.user.findUnique({
     where: { id: authUser(req).id },
   });
-  if (!user) {
-    res.status(401).json({ error: 'Unauthorized' });
-    return;
-  }
+  if (!user) throw unauthorized();
   if (user.emailVerifiedAt) {
     res.status(204).send(); // already verified: send nothing
     return;
@@ -305,8 +247,7 @@ router.post('/resend-verification', requireAuth, async (req, res) => {
     // The user explicitly asked for an email: say honestly it didn't go.
     // 503 = temporary, try again later.
     req.log.error({ err }, 'verification email failed');
-    res.status(503).json({ error: 'Could not send email, try again later' });
-    return;
+    throw new HttpError(503, 'Could not send email, try again later');
   }
 
   res.status(204).send();
@@ -316,16 +257,10 @@ router.post('/resend-verification', requireAuth, async (req, res) => {
 // Not logged in (that's the point). Emails a reset code IF the account
 // exists — and the response never says whether it does.
 router.post('/forgot-password', async (req, res) => {
-  const { email } = req.body ?? {};
+  // Email arrives trimmed + lowercased (schema).
+  const { email } = parse(ForgotPasswordBody, req.body);
 
-  if (!isValidEmail(email)) {
-    res.status(400).json({ error: 'email must be a valid email address' });
-    return;
-  }
-
-  const user = await prisma.user.findUnique({
-    where: { email: email.trim().toLowerCase() },
-  });
+  const user = await prisma.user.findUnique({ where: { email } });
 
   if (user) {
     // NO await: sending takes ~300 ms, "no user" takes ~2 ms. Awaiting
@@ -343,32 +278,11 @@ router.post('/forgot-password', async (req, res) => {
 
 // POST /api/v1/auth/reset-password   body: { email, code, newPassword }
 router.post('/reset-password', async (req, res) => {
-  const { email, code, newPassword } = req.body ?? {};
+  const { email, code, newPassword } = parse(ResetPasswordBody, req.body);
 
-  if (!isValidEmail(email)) {
-    res.status(400).json({ error: 'email must be a valid email address' });
-    return;
-  }
-  if (!isCodeFormat(code)) {
-    res.status(400).json({ error: 'code must be 6 digits' });
-    return;
-  }
-  // Same rules as register — a reset must not allow a weaker password.
-  if (!isValidPassword(newPassword)) {
-    res.status(400).json({
-      error: 'newPassword must be at least 8 characters and at most 72 bytes',
-    });
-    return;
-  }
-
-  const user = await prisma.user.findUnique({
-    where: { email: email.trim().toLowerCase() },
-  });
-  if (!user) {
-    // Same answer as a wrong code: never reveal the email isn't registered.
-    res.status(400).json(invalidCode);
-    return;
-  }
+  const user = await prisma.user.findUnique({ where: { email } });
+  // Same answer as a wrong code: never reveal the email isn't registered.
+  if (!user) throw invalidCode();
 
   // Hash BEFORE the transaction: bcrypt takes ~250 ms, and a transaction
   // should stay short (it holds row locks while open).
@@ -405,10 +319,7 @@ router.post('/reset-password', async (req, res) => {
     return true;
   });
 
-  if (!reset) {
-    res.status(400).json(invalidCode);
-    return;
-  }
+  if (!reset) throw invalidCode();
 
   // No auto-login: the app sends the user to the login screen.
   res.status(204).send();

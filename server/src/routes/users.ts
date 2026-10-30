@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { prisma } from '../db.ts';
+import { HttpError } from '../lib/http.ts';
 import { isNotFound } from '../lib/validation.ts';
 import { authUser, requireAuth } from '../middleware/requireAuth.ts';
 
@@ -12,7 +13,7 @@ router.use(requireAuth);
 
 // A valid token whose user was deleted (JWTs stay valid until exp):
 // the identity no longer exists -> 401, the client should log out.
-const unauthorized = { error: 'Unauthorized' };
+const unauthorized = () => new HttpError(401, 'Unauthorized');
 
 // GET /api/v1/users/me
 router.get('/me', async (req, res) => {
@@ -20,10 +21,7 @@ router.get('/me', async (req, res) => {
     where: { id: authUser(req).id },
   });
 
-  if (!user) {
-    res.status(401).json(unauthorized);
-    return;
-  }
+  if (!user) throw unauthorized();
 
   res.json(user);
 });
@@ -31,16 +29,11 @@ router.get('/me', async (req, res) => {
 // DELETE /api/v1/users/me — account deletion (required by the app stores).
 // onDelete: Cascade in the schema -> their workouts are deleted too.
 router.delete('/me', async (req, res) => {
-  try {
-    await prisma.user.delete({ where: { id: authUser(req).id } });
-    res.status(204).send();
-  } catch (err) {
-    if (isNotFound(err)) {
-      res.status(401).json(unauthorized);
-      return;
-    }
-    throw err;
-  }
+  await prisma.user.delete({ where: { id: authUser(req).id } }).catch((err) => {
+    throw isNotFound(err) ? unauthorized() : err;
+  });
+
+  res.status(204).send();
 });
 
 export default router;

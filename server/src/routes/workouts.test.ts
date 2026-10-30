@@ -171,6 +171,32 @@ describe('PATCH /workouts/:id', () => {
     expect(res.status).toBe(400);
   });
 
+  // Mass assignment: PATCH can't move a workout to another user.
+  it('ignores userId in the body', async () => {
+    const created = await createWorkout();
+    const other = await createUser();
+
+    const res = await api
+      .patch(`${URL}/${created.id}`)
+      .send({ userId: other.id, name: 'Moved?' });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ name: 'Moved?', userId });
+  });
+
+  it('reports every invalid field with its path', async () => {
+    const created = await createWorkout();
+
+    const res = await api
+      .patch(`${URL}/${created.id}`)
+      .send({ name: '', durationMin: -1 });
+
+    expect(res.body.details.map((d: { path: string }) => d.path)).toEqual([
+      'name',
+      'durationMin',
+    ]);
+  });
+
   it('does not half-update when one field is invalid', async () => {
     const created = await createWorkout({ name: 'Bike', durationMin: 60 });
 
