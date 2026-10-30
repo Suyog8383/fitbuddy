@@ -7,7 +7,7 @@ and become a full-stack developer.
 
 - **Background:** React Native / Expo developer, learning backend.
 - **Pace:** ~6 hours/week. One phase (or sub-phase) per session.
-- **Style:** short explanations, no deep theory. I write the code; AI reviews and fixes.
+- **Style:** theory first, then "I do" (AI writes one example) → "you do" → review. Short reviews and fixes.
 - **Platform:** macOS. iOS simulator + Android emulator. Docker Desktop for databases.
 - **Rule:** Stage 2 (system design) topics stay out of Stage 1. Build simple first, scale later.
 
@@ -59,7 +59,7 @@ fitbuddy/
 | 1  | HTTP + Express     | Request/response, routing, middleware, REST design, status codes, env validation, logging (pino), Vitest + Supertest basics | 1 | [x] |
 | 2  | Database           | Postgres in Docker, schema design, Prisma, migrations, relations    | 2     | [x]  |
 | 3  | Authentication     | bcrypt, JWT access + refresh tokens, rotation, logout, email verification, password reset | 2 | [x] |
-| 4  | User management    | Profiles, roles (RBAC), admin routes, Zod validation, error handling, account deletion, OpenAPI docs | 2 | [ ] |
+| 4  | User management    | Profiles, roles (RBAC), admin routes, Zod validation, error handling, account deletion, OpenAPI docs | 2 | [x] |
 | 5  | Mobile ↔ API       | Axios, React Query, secure-store, Expo SDK upgrade + dev build, biometric unlock, Google + Apple sign-in | 2 | [ ] |
 | 6  | Testing            | Test database, integration test patterns, mocking external services, coverage | 1 | [ ] |
 | 7  | File uploads       | Avatars, multer, S3/Cloudinary, signed URLs                         | 1     | [ ]  |
@@ -116,7 +116,16 @@ Scale the same FitBuddy app. Use k6 to generate real load, watch it break, fix i
 - Git: one branch per phase → one PR at the end of the phase → squash and merge into `main`. If you squash mid-phase, start a new branch from the updated `main`.
 - Config: read env only through `src/env.ts` (Zod, fail fast). Secrets get no default. `NODE_ENV` = development | test | production; deploy target (staging/prod) goes in a separate `APP_ENV` (Phase 15).
 - Logging: use `logger` / `req.log` (pino), never `console.*` (except `env.ts`, which runs before the logger exists). Log IDs, not contents — never passwords, tokens, or health data.
-- API docs (OpenAPI + Swagger UI) come in Phase 4, generated from the Zod schemas.
+- Validation: every request body/query goes through `parse(Schema, req.body)` (Zod, `src/schemas/`). Use only the parsed result — never `req.body` — so unknown keys (e.g. `role`, `userId`) are dropped (no mass assignment). Never coerce JSON body fields; only URL params/query.
+- Errors: routes `throw new HttpError(status, ErrorCode.X, message)`; `errorHandler` is the only place that formats responses: `{ error, code, details? }`. The app switches on `code` (stable enum), never on `error` text. Adding a code is fine; renaming/removing one breaks shipped app versions. Any non-`HttpError` → generic 500.
+- Status codes: 401 only for a bad/missing token (the app logs out on 401). Wrong current password → 400, not an admin → 403, someone else's row → same 404 as missing.
+- Responses go through allowlist DTOs (`toUserResponse`, `toAdminUserResponse`, `toWorkoutResponse`) whose return types come from the documented response schemas — docs and code can't drift. Timestamps as ISO strings; date-only values (`birthDate`) as `YYYY-MM-DD`.
+- PATCH with nullable fields: absent = keep, `null` = clear, value = set (`.nullable().optional()`). Store canonical units (cm, kg); never floats for money.
+- Roles: `role` read from the DB on every admin request (not from the JWT), `requireRole` on the whole router. First admin only via `npm run make-admin -- <email>`. Admins can't change their own account. Disabling revokes all refresh tokens and blocks login (403 after the password check) and refresh. Admin data has no profile/health fields; admin changes are logged with ids only.
+- API docs: OpenAPI 3.1 generated from the same Zod schemas (`zod-openapi`), Swagger UI at `/docs`, raw spec at `/openapi.json`, both off in production for now. Examples are fake data and must pass their own schema (tested); every route must be documented (tested); contract tests parse real responses with `strictObject` response schemas, so leaked fields fail.
+- Pin transitive dependencies with npm `overrides` when needed (e.g. `swagger-ui-dist`).
+- Tests that sort by `createdAt` must set the timestamps explicitly — rows created in the same millisecond tie and the order becomes random (flaky).
+- Mobile → local API (Phase 5): iOS simulator `localhost`, Android emulator `10.0.2.2`, real phone the Mac's Wi-Fi IP (`ipconfig getifaddr en0`), set via `EXPO_PUBLIC_API_URL`. A public dev server comes with deployment (Phase 15); use a tunnel if needed earlier.
 - Prisma pinned to `7.10.1` (exact). npm's `latest` tag for `prisma` pointed at an 8.0 release candidate — always check what `latest` is before installing.
 - Migrations: edit `schema.prisma` → `npm run db:migrate -- --name x` → read the SQL → commit it. Never edit an applied migration or change the DB by hand (drift). Prod uses `migrate deploy` only. Adding a required column to a table with data: dev = clear the data; prod = expand → backfill → contract.
 - Every query on user-owned data filters by owner (`where: { id, userId }`) — no IDOR. Someone else's row returns the same 404 as a missing one.
@@ -139,3 +148,4 @@ Scale the same FitBuddy app. Use k6 to generate real load, watch it break, fix i
 | 2026-10-30 | 1 | Express workouts CRUD (in-memory), validation, 404 + error middleware, Zod env validation, pino logging (request IDs, redact, LOG_LEVEL), Vitest + Supertest (33 tests). Switched to "theory → I do → you do → review". Learned: type guards with `unknown`, middleware order, `ERR_HTTP_HEADERS_SENT`, fail-fast config, structured logs, one PR per phase. |
 | 2026-10-30 | 2 | Postgres 18 in Docker Compose (volume, healthcheck), SQL by hand in psql, Prisma 7 (schema, 2 migrations, pg adapter, singleton client), workouts in Postgres, User 1→N Workout (FK index, cascade delete), nested routes `/users/:userId/workouts`, test DB (60 tests incl. IDOR + cascade). Learned: SQL CRUD + constraints, `;` in psql, ORDER BY tie-breakers, normalization, foreign keys, ON DELETE options, indexes, SQL injection, P2025/P2002/P2003, IDOR. |
 | 2026-10-30 | 3 | Own auth, no Auth0/Firebase. 3A bcrypt register/login (timing-safe, no enumeration). 3B JWT access tokens (jose), `requireAuth`, `/users/me`, workouts owned via token. 3C refresh tokens: hashed, rotation, reuse detection → family revoke, logout + logout-all. 3D email verification + password reset with 6-digit codes, Resend behind a swappable sender. 184 tests. Learned: hashing vs bcrypt, JWT claims + `alg` attacks, stateless vs revocable tokens, transactions (array + callback form), conditional updates for races, mutation testing, enumeration + timing leaks, fire-and-forget with `.catch`, Zod `.refine`, `satisfies`. |
+| 2026-10-30 | 4 | 4A Zod request validation (`parse`, `HttpError`, one error format, mass-assignment tests). 4B 1:1 profile (enums, date-only birthDate, three-state PATCH, nested upsert), allowlist DTOs, change password with re-auth. 4C RBAC: role enum, `requireRole` (DB lookup), make-admin CLI, admin list/get/update/stats, disable accounts, lockout rule, audit log lines. 4D OpenAPI 3.1 + Swagger UI from Zod, structured like a guide (navigation, tag descriptions, examples, per-status error examples), error codes, contract tests. 297 tests. Learned: parse don't validate, mass assignment, 401 vs 400 vs 403, three-state PATCH, DATE vs timestamp, 1:1 relations + upsert, nested writes, DTO allowlists, closures/middleware factories, `Promise.all`, input vs output schemas, docs drift, flaky tests from timestamp ties, npm overrides. |
