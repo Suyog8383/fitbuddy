@@ -27,7 +27,18 @@ describe('EnvSchema', () => {
       NODE_ENV: 'development',
       PORT: 3000,
       APP_NAME: 'FitBuddy',
+      EMAIL_FROM: 'FitBuddy <onboarding@resend.dev>',
     });
+  });
+
+  it('accepts production with RESEND_API_KEY set', () => {
+    const result = EnvSchema.safeParse({
+      ...BASE,
+      NODE_ENV: 'production',
+      RESEND_API_KEY: 're_test_key',
+    });
+
+    expect(result.success).toBe(true);
   });
 
   it('accepts a valid LOG_LEVEL', () => {
@@ -50,6 +61,8 @@ describe('EnvSchema', () => {
     ['DATABASE_URL not a URL', { ...BASE, DATABASE_URL: 'not-a-url' }],
     ['JWT_SECRET missing', { ...BASE, JWT_SECRET: undefined }],
     ['JWT_SECRET too short', { ...BASE, JWT_SECRET: 'change-me' }],
+    ['production without RESEND_API_KEY', { ...BASE, NODE_ENV: 'production' }],
+    ['RESEND_API_KEY empty', { ...BASE, RESEND_API_KEY: '' }],
   ])('fails when %s', (_label, input) => {
     expect(EnvSchema.safeParse(input).success).toBe(false);
   });

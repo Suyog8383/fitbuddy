@@ -1,5 +1,8 @@
 import { Router } from 'express';
 import { prisma } from '../db.ts';
+import { EmailCodePurpose } from '../generated/prisma/client.ts';
+import { CODE_TTL_MINUTES, consumeCode, issueCode } from '../lib/emailCodes.ts';
+import { sendEmail } from '../lib/email.ts';
 import {
   DUMMY_HASH,
   hashPassword,
@@ -21,6 +24,42 @@ import {
 import { authUser, requireAuth } from '../middleware/requireAuth.ts';
 
 const router = Router();
+
+// One email template per purpose. `satisfies` makes TypeScript check that
+// every EmailCodePurpose has an entry — add a purpose, forget it here,
+// and typecheck fails.
+const CODE_EMAILS = {
+  EMAIL_VERIFICATION: {
+    subject: 'Verify your FitBuddy email',
+    intro: 'Your verification code is',
+  },
+  PASSWORD_RESET: {
+    subject: 'Reset your FitBuddy password',
+    intro: 'Your password reset code is',
+  },
+} satisfies Record<EmailCodePurpose, { subject: string; intro: string }>;
+
+// Issues a new code (old one dies) and emails it. Throws if sending fails —
+// the caller decides what a failed send means for its response.
+async function sendCodeEmail(
+  user: { id: string; email: string },
+  purpose: EmailCodePurpose,
+): Promise<void> {
+  const code = await issueCode(user.id, purpose);
+  const { subject, intro } = CODE_EMAILS[purpose];
+  await sendEmail({
+    to: user.email,
+    subject,
+    text:
+      `${intro} ${code}. It expires in ${CODE_TTL_MINUTES} minutes.\n\n` +
+      `If you didn't ask for this, you can ignore this email.`,
+  });
+}
+
+// Exactly 6 digits, as a string ("000042" keeps its zeros; a number wouldn't).
+const isCodeFormat = (code: unknown): code is string =>
+  typeof code === 'string' && /^\d{6}$/.test(code);
+const invalidCode = { error: 'Invalid or expired code' };
 
 // POST /api/v1/auth/register
 router.post('/register', async (req, res) => {
@@ -55,11 +94,22 @@ router.post('/register', async (req, res) => {
         passwordHash,
       },
     });
+
+    // The account exists even if the email fails: log it and still answer
+    // 201. The app shows "verify your email" with a "resend code" button.
+    // Own try/catch, so a send error never reaches the P2002 check below.
+    try {
+      await sendCodeEmail(user, EmailCodePurpose.EMAIL_VERIFICATION);
+    } catch (err) {
+      req.log.error({ err }, 'verification email failed');
+    }
+
     res.status(201).json(user);
   } catch (err) {
     if (isUniqueViolation(err)) {
-      // Reveals that the email is registered (enumeration) — accepted
-      // for now; 3D (email verification) can hide it.
+      // Reveals that the email is registered (enumeration) — accepted:
+      // forgot-password (the endpoint attackers probe) hides it, and
+      // rate limiting (Phase 11) slows bulk probing.
       res.status(409).json({ error: 'Email already in use' });
       return;
     }
@@ -179,6 +229,188 @@ router.post('/logout-all', requireAuth, async (req, res) => {
     data: { revokedAt: new Date() },
   });
 
+  res.status(204).send();
+});
+
+// POST /api/v1/auth/verify-email   body: { code }
+// Logged in: the access token says WHO, the code proves they own the inbox.
+router.post('/verify-email', requireAuth, async (req, res) => {
+  const userId = authUser(req).id;
+  const { code } = req.body ?? {};
+
+  if (!isCodeFormat(code)) {
+    res.status(400).json({ error: 'code must be 6 digits' });
+    return;
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) {
+    // Valid token, deleted account (see users.ts).
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  // Idempotent: verifying twice is not an error, there's just nothing to do.
+  if (user.emailVerifiedAt) {
+    res.status(204).send();
+    return;
+  }
+
+  // Code used + user verified: both or neither. A crash in between can't
+  // burn the code without verifying the email.
+  // `false` doesn't throw, so the spent attempt is still committed.
+  const verified = await prisma.$transaction(async (tx) => {
+    const ok = await consumeCode(
+      userId,
+      EmailCodePurpose.EMAIL_VERIFICATION,
+      code,
+      tx,
+    );
+    if (ok) {
+      await tx.user.update({
+        where: { id: userId },
+        data: { emailVerifiedAt: new Date() },
+      });
+    }
+    return ok;
+  });
+
+  if (!verified) {
+    // Wrong, expired, used, out of attempts — one answer for all.
+    res.status(400).json(invalidCode);
+    return;
+  }
+
+  res.status(204).send();
+});
+
+// POST /api/v1/auth/resend-verification
+// "Didn't get the email?" -> new code; the old one stops working.
+// (Spamming this = many emails. Rate limiting comes in Phase 11.)
+router.post('/resend-verification', requireAuth, async (req, res) => {
+  const user = await prisma.user.findUnique({
+    where: { id: authUser(req).id },
+  });
+  if (!user) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  if (user.emailVerifiedAt) {
+    res.status(204).send(); // already verified: send nothing
+    return;
+  }
+
+  try {
+    await sendCodeEmail(user, EmailCodePurpose.EMAIL_VERIFICATION);
+  } catch (err) {
+    // The user explicitly asked for an email: say honestly it didn't go.
+    // 503 = temporary, try again later.
+    req.log.error({ err }, 'verification email failed');
+    res.status(503).json({ error: 'Could not send email, try again later' });
+    return;
+  }
+
+  res.status(204).send();
+});
+
+// POST /api/v1/auth/forgot-password   body: { email }
+// Not logged in (that's the point). Emails a reset code IF the account
+// exists — and the response never says whether it does.
+router.post('/forgot-password', async (req, res) => {
+  const { email } = req.body ?? {};
+
+  if (!isValidEmail(email)) {
+    res.status(400).json({ error: 'email must be a valid email address' });
+    return;
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { email: email.trim().toLowerCase() },
+  });
+
+  if (user) {
+    // NO await: sending takes ~300 ms, "no user" takes ~2 ms. Awaiting
+    // would let response time reveal which emails are registered.
+    // Fire and forget — but always catch, or a failed send becomes an
+    // unhandled rejection that can crash Node.
+    sendCodeEmail(user, EmailCodePurpose.PASSWORD_RESET).catch((err) => {
+      req.log.error({ err }, 'password reset email failed');
+    });
+  }
+
+  // Same answer for both cases (enumeration).
+  res.status(204).send();
+});
+
+// POST /api/v1/auth/reset-password   body: { email, code, newPassword }
+router.post('/reset-password', async (req, res) => {
+  const { email, code, newPassword } = req.body ?? {};
+
+  if (!isValidEmail(email)) {
+    res.status(400).json({ error: 'email must be a valid email address' });
+    return;
+  }
+  if (!isCodeFormat(code)) {
+    res.status(400).json({ error: 'code must be 6 digits' });
+    return;
+  }
+  // Same rules as register — a reset must not allow a weaker password.
+  if (!isValidPassword(newPassword)) {
+    res.status(400).json({
+      error: 'newPassword must be at least 8 characters and at most 72 bytes',
+    });
+    return;
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { email: email.trim().toLowerCase() },
+  });
+  if (!user) {
+    // Same answer as a wrong code: never reveal the email isn't registered.
+    res.status(400).json(invalidCode);
+    return;
+  }
+
+  // Hash BEFORE the transaction: bcrypt takes ~250 ms, and a transaction
+  // should stay short (it holds row locks while open).
+  const passwordHash = await hashPassword(newPassword);
+
+  // All or nothing: code used + new password + sessions revoked.
+  // A half-done reset (password changed, attacker's sessions still alive)
+  // is exactly what this must prevent.
+  const reset = await prisma.$transaction(async (tx) => {
+    const ok = await consumeCode(
+      user.id,
+      EmailCodePurpose.PASSWORD_RESET,
+      code,
+      tx,
+    );
+    if (!ok) return false; // spent attempt still commits (no throw)
+
+    const now = new Date();
+    await tx.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash,
+        // The code came from their inbox -> that proves ownership too.
+        // Keep the original date if already verified.
+        emailVerifiedAt: user.emailVerifiedAt ?? now,
+      },
+    });
+    // Log out every device: whoever was in the account before the reset
+    // (maybe the reason for it) loses access.
+    await tx.refreshToken.updateMany({
+      where: { userId: user.id, revokedAt: null },
+      data: { revokedAt: now },
+    });
+    return true;
+  });
+
+  if (!reset) {
+    res.status(400).json(invalidCode);
+    return;
+  }
+
+  // No auto-login: the app sends the user to the login screen.
   res.status(204).send();
 });
 

@@ -1,5 +1,6 @@
 import bcrypt from 'bcrypt';
 import { prisma } from '../db.ts';
+import { sentEmails } from '../lib/email.ts';
 import { signAccessToken } from '../lib/tokens.ts';
 
 // Test data builders: create rows straight in the DB with sensible defaults.
@@ -33,4 +34,13 @@ export function createUser(
 // /auth/login (bcrypt) in every test. Login itself is tested in auth.test.ts.
 export async function authHeader(userId: string): Promise<string> {
   return `Bearer ${await signAccessToken(userId)}`;
+}
+
+// The 6-digit code in the newest email sent to `to` (test inbox, see
+// lib/email.ts). Throws if there is none, so a test fails loudly.
+export function lastCodeSentTo(to: string): string {
+  const email = sentEmails.findLast((e) => e.to === to);
+  const code = email?.text.match(/\b\d{6}\b/)?.[0];
+  if (!code) throw new Error(`no code emailed to ${to}`);
+  return code;
 }

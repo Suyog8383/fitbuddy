@@ -18,21 +18,24 @@ datasource db {
 // Model = singular PascalCase (JS side). Table = plural snake_case (DB side).
 
 model User {
-  id           String   @id @default(uuid()) @db.Uuid
+  id              String    @id @default(uuid()) @db.Uuid
   // @unique = UNIQUE constraint + index. Duplicate -> Prisma error P2002.
-  email        String   @unique
-  name         String
+  email           String    @unique
+  name            String
   // bcrypt hash (algorithm + cost + salt + hash in one string), never the
   // password itself. Must never appear in an API response or a log —
   // the Prisma client omits it by default (src/db.ts).
-  passwordHash String   @map("password_hash")
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+  passwordHash    String    @map("password_hash")
+  // null = not verified yet. A timestamp also records WHEN it happened.
+  emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
   // Set automatically by Prisma on every update.
-  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
 
   // Virtual (no column): the "many" side of User 1 -> N Workout.
   workouts      Workout[]
   refreshTokens RefreshToken[]
+  emailCodes    EmailCode[]
 
   @@map("users")
 }
@@ -80,4 +83,37 @@ model RefreshToken {
   @@index([userId])
   @@index([familyId])
   @@map("refresh_tokens")
+}
+
+// Enum = a Postgres type that only allows these values. A code issued for
+// one purpose can never be used for the other.
+enum EmailCodePurpose {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+
+  @@map("email_code_purpose")
+}
+
+// 6-digit one-time codes sent by email. Weak alone (1,000,000 options),
+// safe with: short expiry + attempt limit + single use + one active code
+// per user and purpose (issuing a new one kills the old one).
+model EmailCode {
+  id        String           @id @default(uuid()) @db.Uuid
+  purpose   EmailCodePurpose
+  // SHA-256 of the code. Stops anyone just reading the table; the real
+  // protection is expiry + attempts (a 6-digit hash cracks in ms).
+  codeHash  String           @map("code_hash")
+  // Wrong guesses so far. At the limit (5) the code is dead.
+  attempts  Int              @default(0)
+  expiresAt DateTime         @map("expires_at") @db.Timestamptz
+  // Set on success (single use), or when replaced by a newer code.
+  usedAt    DateTime?        @map("used_at") @db.Timestamptz
+  createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz
+
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Every lookup is "this user's code for this purpose".
+  @@index([userId, purpose])
+  @@map("email_codes")
 }

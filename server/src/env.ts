@@ -2,31 +2,46 @@ import { z } from 'zod';
 
 // The shape our config must have. One place to see every env var the app uses.
 // Exported so tests can check the rules without exiting the process.
-export const EnvSchema = z.object({
-  // Only the 3 standard values. Vitest sets 'test' automatically.
-  NODE_ENV: z
-    .enum(['development', 'test', 'production'])
-    .default('development'),
+export const EnvSchema = z
+  .object({
+    // Only the 3 standard values. Vitest sets 'test' automatically.
+    NODE_ENV: z
+      .enum(['development', 'test', 'production'])
+      .default('development'),
 
-  // process.env values are strings -> coerce "3000" into 3000.
-  // Safe, non-secret -> OK to have a default.
-  PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+    // process.env values are strings -> coerce "3000" into 3000.
+    // Safe, non-secret -> OK to have a default.
+    PORT: z.coerce.number().int().min(1).max(65535).default(3000),
 
-  APP_NAME: z.string().min(1).default('FitBuddy'),
+    APP_NAME: z.string().min(1).default('FitBuddy'),
 
-  // Optional override. If unset, logger.ts picks a default per NODE_ENV.
-  LOG_LEVEL: z
-    .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
-    .optional(),
+    // Optional override. If unset, logger.ts picks a default per NODE_ENV.
+    LOG_LEVEL: z
+      .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
+      .optional(),
 
-  // Secret -> NO default, so a missing one fails startup.
-  // Must be a postgres:// or postgresql:// URL.
-  DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
+    // Secret -> NO default, so a missing one fails startup.
+    // Must be a postgres:// or postgresql:// URL.
+    DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
 
-  // Signs access tokens. Anyone with it can forge a login for any user.
-  // Secret -> no default. 32+ chars so it can't be brute-forced offline.
-  JWT_SECRET: z.string().min(32),
-});
+    // Signs access tokens. Anyone with it can forge a login for any user.
+    // Secret -> no default. 32+ chars so it can't be brute-forced offline.
+    JWT_SECRET: z.string().min(32),
+
+    // Resend API key. Secret -> no default. Optional in dev: without it,
+    // emails are printed to the console instead (src/lib/email.ts).
+    RESEND_API_KEY: z.string().min(1).optional(),
+
+    // Sender address. Not secret -> default. onboarding@resend.dev works
+    // without your own domain, but only delivers to your Resend account email.
+    EMAIL_FROM: z.string().min(1).default('FitBuddy <onboarding@resend.dev>'),
+  })
+  // Rules across several fields go on the whole object.
+  // Production must send real email — never fall back to the console.
+  .refine((e) => e.NODE_ENV !== 'production' || e.RESEND_API_KEY, {
+    message: 'RESEND_API_KEY is required in production',
+    path: ['RESEND_API_KEY'],
+  });
 
 // TS type generated from the schema — never written by hand.
 export type Env = z.infer<typeof EnvSchema>;

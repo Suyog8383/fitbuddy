@@ -1,17 +1,27 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import app from '../app.ts';
 import { prisma } from '../db.ts';
 import { verifyPassword } from '../lib/password.ts';
 import { hashRefreshToken, issueRefreshToken } from '../lib/refreshTokens.ts';
 import { verifyAccessToken } from '../lib/tokens.ts';
-import { createUser, TEST_PASSWORD } from '../test/factories.ts';
+import { sentEmails } from '../lib/email.ts';
+import {
+  authHeader,
+  createUser,
+  lastCodeSentTo,
+  TEST_PASSWORD,
+} from '../test/factories.ts';
 
 const REGISTER = '/api/v1/auth/register';
 const LOGIN = '/api/v1/auth/login';
 const REFRESH = '/api/v1/auth/refresh';
 const LOGOUT = '/api/v1/auth/logout';
 const LOGOUT_ALL = '/api/v1/auth/logout-all';
+const VERIFY_EMAIL = '/api/v1/auth/verify-email';
+const RESEND = '/api/v1/auth/resend-verification';
+const FORGOT = '/api/v1/auth/forgot-password';
+const RESET = '/api/v1/auth/reset-password';
 
 const valid = {
   email: 'suyog@mail.com',
@@ -409,5 +419,312 @@ describe('POST /api/v1/auth/logout-all', () => {
       .set('Authorization', `Bearer ${refreshToken}`);
 
     expect(res.status).toBe(401);
+  });
+});
+
+// Real register + login: the verification email lands in the test inbox.
+async function registerAndLogin() {
+  await request(app).post(REGISTER).send(valid);
+  const { user, accessToken } = await loginAs(valid.email);
+  return { user, auth: `Bearer ${accessToken}` };
+}
+
+describe('email verification', () => {
+  const verify = (auth: string, code: unknown) =>
+    request(app).post(VERIFY_EMAIL).set('Authorization', auth).send({ code });
+
+  it('register emails a 6-digit code; the user starts unverified', async () => {
+    const res = await request(app).post(REGISTER).send(valid);
+
+    expect(res.body.emailVerifiedAt).toBeNull();
+    expect(sentEmails).toHaveLength(1);
+    expect(sentEmails[0]).toMatchObject({
+      to: valid.email,
+      subject: 'Verify your FitBuddy email',
+    });
+    expect(lastCodeSentTo(valid.email)).toMatch(/^\d{6}$/);
+  });
+
+  it('verifies with the emailed code; /users/me shows it', async () => {
+    const { auth } = await registerAndLogin();
+
+    const res = await verify(auth, lastCodeSentTo(valid.email));
+
+    expect(res.status).toBe(204);
+    const me = await request(app)
+      .get('/api/v1/users/me')
+      .set('Authorization', auth);
+    expect(me.body.emailVerifiedAt).toEqual(expect.any(String));
+  });
+
+  it('rejects a wrong code with 400 and stays unverified', async () => {
+    const { user, auth } = await registerAndLogin();
+    const code = lastCodeSentTo(valid.email);
+
+    const res = await verify(auth, code === '000000' ? '111111' : '000000');
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'Invalid or expired code' });
+    const stored = await prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+    });
+    expect(stored.emailVerifiedAt).toBeNull();
+  });
+
+  it('a code works only once', async () => {
+    const { auth } = await registerAndLogin();
+    const code = lastCodeSentTo(valid.email);
+    await verify(auth, code);
+    // Un-verify so the second call really tries the code again.
+    await prisma.user.updateMany({ data: { emailVerifiedAt: null } });
+
+    const res = await verify(auth, code);
+
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 204 when already verified (idempotent)', async () => {
+    const { auth } = await registerAndLogin();
+    await verify(auth, lastCodeSentTo(valid.email));
+
+    const res = await verify(auth, '123456');
+
+    expect(res.status).toBe(204);
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['a number', 123456],
+    ['too short', '12345'],
+    ['not digits', '12a456'],
+  ])('returns 400 when the code is %s', async (_label, code) => {
+    const { auth } = await registerAndLogin();
+
+    const res = await verify(auth, code);
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'code must be 6 digits' });
+  });
+
+  it('returns 401 without an access token', async () => {
+    const res = await request(app).post(VERIFY_EMAIL).send({ code: '123456' });
+
+    expect(res.status).toBe(401);
+  });
+});
+
+describe('POST /api/v1/auth/resend-verification', () => {
+  const resend = (auth: string) =>
+    request(app).post(RESEND).set('Authorization', auth);
+
+  it('emails a new code; the old one stops working', async () => {
+    const { auth } = await registerAndLogin();
+    const oldCode = lastCodeSentTo(valid.email);
+
+    const res = await resend(auth);
+    const newCode = lastCodeSentTo(valid.email);
+
+    expect(res.status).toBe(204);
+    expect(sentEmails).toHaveLength(2);
+    // Codes are random: a 1-in-a-million chance they match, so only test
+    // the old one when it differs.
+    if (newCode !== oldCode) {
+      const old = await request(app)
+        .post(VERIFY_EMAIL)
+        .set('Authorization', auth)
+        .send({ code: oldCode });
+      expect(old.status).toBe(400);
+    }
+    const ok = await request(app)
+      .post(VERIFY_EMAIL)
+      .set('Authorization', auth)
+      .send({ code: newCode });
+    expect(ok.status).toBe(204);
+  });
+
+  it('sends nothing when already verified', async () => {
+    const user = await createUser();
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { emailVerifiedAt: new Date() },
+    });
+
+    const res = await resend(await authHeader(user.id));
+
+    expect(res.status).toBe(204);
+    expect(sentEmails).toHaveLength(0);
+  });
+
+  it('returns 401 without an access token', async () => {
+    const res = await request(app).post(RESEND);
+
+    expect(res.status).toBe(401);
+  });
+});
+
+describe('password reset', () => {
+  const EMAIL = 'suyog@mail.com';
+  const NEW_PASSWORD = 'brand new password';
+
+  const forgot = (email: unknown) => request(app).post(FORGOT).send({ email });
+  const reset = (body: object) =>
+    request(app)
+      .post(RESET)
+      .send({ email: EMAIL, newPassword: NEW_PASSWORD, ...body });
+
+  // forgot-password doesn't await the send -> the email may arrive just
+  // after the 204. waitFor retries until the code is in the inbox.
+  async function requestCode(email = EMAIL) {
+    const res = await forgot(email);
+    expect(res.status).toBe(204);
+    return vi.waitFor(() => lastCodeSentTo(email));
+  }
+
+  const wrong = (code: string) => (code === '000000' ? '111111' : '000000');
+
+  it('resets the password: old one fails, new one works', async () => {
+    await createUser({ email: EMAIL });
+    const code = await requestCode();
+
+    const res = await reset({ code });
+
+    expect(res.status).toBe(204);
+    const oldLogin = await request(app)
+      .post(LOGIN)
+      .send({ email: EMAIL, password: TEST_PASSWORD });
+    const newLogin = await request(app)
+      .post(LOGIN)
+      .send({ email: EMAIL, password: NEW_PASSWORD });
+    expect(oldLogin.status).toBe(401);
+    expect(newLogin.status).toBe(200);
+  });
+
+  it('emails a reset code (not a verification code)', async () => {
+    await createUser({ email: EMAIL });
+
+    await requestCode();
+
+    expect(sentEmails.at(-1)?.subject).toBe('Reset your FitBuddy password');
+  });
+
+  it('logs out every device', async () => {
+    await createUser({ email: EMAIL });
+    const phone = await loginAs(EMAIL);
+    const tablet = await loginAs(EMAIL);
+
+    await reset({ code: await requestCode() });
+
+    expect((await refresh(phone.refreshToken)).status).toBe(401);
+    expect((await refresh(tablet.refreshToken)).status).toBe(401);
+  });
+
+  it('also verifies the email (the code proves inbox ownership)', async () => {
+    const user = await createUser({ email: EMAIL });
+
+    await reset({ code: await requestCode() });
+
+    const stored = await prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+    });
+    expect(stored.emailVerifiedAt).not.toBeNull();
+  });
+
+  it('keeps the original verification date', async () => {
+    const verifiedAt = new Date('2026-01-01T00:00:00Z');
+    const user = await createUser({ email: EMAIL });
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { emailVerifiedAt: verifiedAt },
+    });
+
+    await reset({ code: await requestCode() });
+
+    const stored = await prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+    });
+    expect(stored.emailVerifiedAt).toEqual(verifiedAt);
+  });
+
+  it('forgot-password: 204 and no email for an unknown address', async () => {
+    const res = await forgot('nobody@mail.com');
+
+    expect(res.status).toBe(204);
+    // Give a (wrongly) fire-and-forget send time to land before checking.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(sentEmails).toHaveLength(0);
+  });
+
+  it('a wrong code changes nothing', async () => {
+    await createUser({ email: EMAIL });
+    const code = await requestCode();
+    const session = await loginAs(EMAIL);
+
+    const res = await reset({ code: wrong(code) });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'Invalid or expired code' });
+    const login = await request(app)
+      .post(LOGIN)
+      .send({ email: EMAIL, password: TEST_PASSWORD });
+    expect(login.status).toBe(200);
+    expect((await refresh(session.refreshToken)).status).toBe(200);
+  });
+
+  it('a code works only once', async () => {
+    await createUser({ email: EMAIL });
+    const code = await requestCode();
+    await reset({ code });
+
+    const res = await reset({ code, newPassword: 'another new password' });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('kills the code after 5 wrong attempts', async () => {
+    await createUser({ email: EMAIL });
+    const code = await requestCode();
+    for (let i = 0; i < 5; i++) {
+      await reset({ code: wrong(code) });
+    }
+
+    const res = await reset({ code });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('a verification code cannot reset the password', async () => {
+    await request(app).post(REGISTER).send(valid); // emails a VERIFY code
+
+    const res = await reset({ code: lastCodeSentTo(valid.email) });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('unknown email gets the same 400 as a wrong code', async () => {
+    const res = await reset({ email: 'nobody@mail.com', code: '123456' });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'Invalid or expired code' });
+  });
+
+  it.each([
+    ['email missing', { email: undefined, code: '123456' }],
+    ['code missing', { code: undefined }],
+    ['code not 6 digits', { code: '1234' }],
+    ['newPassword missing', { code: '123456', newPassword: undefined }],
+    ['newPassword too short', { code: '123456', newPassword: 'short' }],
+  ])('reset-password returns 400 when %s', async (_label, body) => {
+    const res = await reset(body);
+
+    expect(res.status).toBe(400);
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['not an email', 'not-an-email'],
+  ])('forgot-password returns 400 when email is %s', async (_label, email) => {
+    const res = await forgot(email);
+
+    expect(res.status).toBe(400);
   });
 });
