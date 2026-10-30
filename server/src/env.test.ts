@@ -23,10 +23,18 @@ describe('EnvSchema', () => {
     });
   });
 
+  it('accepts a valid LOG_LEVEL', () => {
+    const result = EnvSchema.safeParse({ LOG_LEVEL: 'debug' });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.LOG_LEVEL).toBe('debug');
+  });
+
   it.each([
     ['PORT not a number', { PORT: 'abc' }],
     ['PORT above max', { PORT: '70000' }],
     ['NODE_ENV not allowed', { NODE_ENV: 'prod' }],
+    ['LOG_LEVEL not allowed', { LOG_LEVEL: 'loud' }],
   ])('fails when %s', (_label, input) => {
     expect(EnvSchema.safeParse(input).success).toBe(false);
   });

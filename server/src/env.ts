@@ -14,6 +14,11 @@ export const EnvSchema = z.object({
 
   APP_NAME: z.string().min(1).default('FitBuddy'),
 
+  // Optional override. If unset, logger.ts picks a default per NODE_ENV.
+  LOG_LEVEL: z
+    .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
+    .optional(),
+
   // Secrets later (Phase 3): NO default, so a missing one fails startup.
   // JWT_SECRET: z.string().min(32),
 });
