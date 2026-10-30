@@ -56,7 +56,7 @@ fitbuddy/
 | #  | Phase              | Key concepts                                                        | Weeks | Done |
 |----|--------------------|---------------------------------------------------------------------|-------|------|
 | 0  | Setup              | Monorepo, git, Node native TS, env files, ESLint, Prettier          | 1     | [x]  |
-| 1  | HTTP + Express     | Request/response, routing, middleware, REST design, status codes, env validation, logging (pino), Vitest + Supertest basics | 1 | [ ] |
+| 1  | HTTP + Express     | Request/response, routing, middleware, REST design, status codes, env validation, logging (pino), Vitest + Supertest basics | 1 | [x] |
 | 2  | Database           | Postgres in Docker, schema design, Prisma, migrations, relations    | 2     | [ ]  |
 | 3  | Authentication     | bcrypt, JWT access + refresh tokens, rotation, logout, email verification, password reset | 2 | [ ] |
 | 4  | User management    | Profiles, roles (RBAC), admin routes, Zod validation, error handling, account deletion, OpenAPI docs | 2 | [ ] |
@@ -113,7 +113,10 @@ Scale the same FitBuddy app. Use k6 to generate real load, watch it break, fix i
 - TypeScript 6+ no longer auto-loads `@types/*` — list them in tsconfig (`"types": ["node"]`).
 - TypeScript pinned to `~6.0`: typescript-eslint doesn't support TS 7 yet. Upgrade when it does.
 - Mobile started on Expo SDK 57 (Expo Go). Upgrade the SDK before creating the dev build in Phase 5.
-- Git: one branch per phase → PR → squash and merge into `main`.
+- Git: one branch per phase → one PR at the end of the phase → squash and merge into `main`. If you squash mid-phase, start a new branch from the updated `main`.
+- Config: read env only through `src/env.ts` (Zod, fail fast). Secrets get no default. `NODE_ENV` = development | test | production; deploy target (staging/prod) goes in a separate `APP_ENV` (Phase 15).
+- Logging: use `logger` / `req.log` (pino), never `console.*` (except `env.ts`, which runs before the logger exists). Log IDs, not contents — never passwords, tokens, or health data.
+- API docs (OpenAPI + Swagger UI) come in Phase 4, generated from the Zod schemas.
 - Every phase ends with something working, tested, and committed. Write a few Vitest/Supertest tests in every phase from Phase 1 on.
 
 ## Progress Log
@@ -121,3 +124,4 @@ Scale the same FitBuddy app. Use k6 to generate real load, watch it break, fix i
 | Date | Phase | Notes |
 |------|-------|-------|
 | 2026-10-29 | 0 | Setup done: server (Node 24 native TS, env, ESLint, Prettier) + mobile (Expo SDK 57) on iOS + Android. TS pinned to 6.0 for typescript-eslint. Learned: embedded git repo (160000) fix, enum vs `as const`, squash merge. |
+| 2026-10-30 | 1 | Express workouts CRUD (in-memory), validation, 404 + error middleware, Zod env validation, pino logging (request IDs, redact, LOG_LEVEL), Vitest + Supertest (33 tests). Switched to "theory → I do → you do → review". Learned: type guards with `unknown`, middleware order, `ERR_HTTP_HEADERS_SENT`, fail-fast config, structured logs, one PR per phase. |
