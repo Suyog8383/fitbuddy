@@ -1,0 +1,36 @@
+# Local infrastructure for development. Start: `docker compose up -d`
+# Values like ${POSTGRES_USER} come from server/.env (Compose reads it automatically).
+services:
+  postgres:
+    # Pinned major version — never `latest` (surprise upgrades break data).
+    image: postgres:18
+    container_name: fitbuddy-postgres
+    restart: unless-stopped
+
+    # The image creates this user + database on first start.
+    # `:?` = fail with an error if the variable is missing from .env.
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+
+    # host:container. 127.0.0.1 = only reachable from this Mac,
+    # not from other devices on your Wi-Fi.
+    ports:
+      - '127.0.0.1:5432:5432'
+
+    # Named volume = data survives container restarts and removal.
+    # Postgres 18+ keeps its data under /var/lib/postgresql.
+    volumes:
+      - postgres-data:/var/lib/postgresql
+
+    # Docker checks this to know when Postgres is actually ready
+    # (the container starts a few seconds before the DB accepts connections).
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-data:
