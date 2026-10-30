@@ -4,6 +4,8 @@ import { pino } from 'pino';
 import { pinoHttp } from 'pino-http';
 import request from 'supertest';
 import app from './app.ts';
+import { z } from 'zod';
+import { HttpError, parse } from './lib/http.ts';
 import { errorHandler } from './middleware/errorHandler.ts';
 
 // Supertest sends requests straight to `app` in memory — no listen(), no port.
@@ -23,7 +25,10 @@ describe('unknown routes', () => {
     const res = await request(app).get('/nope');
 
     expect(res.status).toBe(404);
-    expect(res.body).toEqual({ error: 'Route not found: GET /nope' });
+    expect(res.body).toEqual({
+      error: 'Route not found: GET /nope',
+      code: 'ROUTE_NOT_FOUND',
+    });
   });
 
   it('returns 404 for a method the route does not support', async () => {
@@ -41,7 +46,10 @@ describe('errorHandler', () => {
       .send('{bad json');
 
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: 'Invalid JSON body' });
+    expect(res.body).toEqual({
+      error: 'Invalid JSON body',
+      code: 'INVALID_JSON',
+    });
   });
 
   it('returns generic 500 JSON for a thrown error, without leaking details', async () => {
@@ -67,7 +75,10 @@ describe('errorHandler', () => {
 
     // Client: generic message only.
     expect(res.status).toBe(500);
-    expect(res.body).toEqual({ error: 'Internal server error' });
+    expect(res.body).toEqual({
+      error: 'Internal server error',
+      code: 'INTERNAL_ERROR',
+    });
     expect(JSON.stringify(res.body)).not.toContain('secret');
 
     // Logs: full error with stack, tagged with the request id.
@@ -77,5 +88,90 @@ describe('errorHandler', () => {
     expect(logged.err.message).toBe('secret internal detail');
     expect(logged.err.stack).toEqual(expect.any(String));
     expect(logged.req.id).toBeDefined();
+  });
+});
+
+// Throwaway app with one route + the real errorHandler.
+// pino-http with a silent logger: errorHandler needs req.log.
+function appThatRuns(handler: express.RequestHandler) {
+  const testApp = express();
+  testApp.use(express.json());
+  testApp.use(pinoHttp({ logger: pino({ level: 'silent' }) }));
+  testApp.post('/test', handler);
+  testApp.use(errorHandler);
+  return testApp;
+}
+
+describe('errorHandler: thrown errors', () => {
+  it('sends an HttpError as its status, code + message', async () => {
+    const testApp = appThatRuns(() => {
+      throw new HttpError(404, 'WORKOUT_NOT_FOUND', 'Workout not found');
+    });
+
+    const res = await request(testApp).post('/test');
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({
+      error: 'Workout not found',
+      code: 'WORKOUT_NOT_FOUND',
+    });
+  });
+
+  it('turns a ZodError into 400 with every bad field', async () => {
+    const Body = z.object({
+      name: z.string().min(1),
+      goal: z.object({ target: z.number() }),
+    });
+    const testApp = appThatRuns((req, res) => {
+      res.json(parse(Body, req.body));
+    });
+
+    const res = await request(testApp)
+      .post('/test')
+      .send({ name: '', goal: { target: 'ten' } });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({
+      error: 'Invalid request',
+      code: 'VALIDATION_FAILED',
+      details: [
+        { path: 'name', message: expect.any(String) },
+        { path: 'goal.target', message: expect.any(String) }, // nested
+      ],
+    });
+  });
+
+  it('never echoes the invalid input back', async () => {
+    const Body = z.object({ password: z.string().min(100) });
+    const testApp = appThatRuns((req, res) => {
+      res.json(parse(Body, req.body));
+    });
+
+    const res = await request(testApp)
+      .post('/test')
+      .send({ password: 'my-secret-pass' });
+
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(res.body)).not.toContain('my-secret-pass');
+  });
+});
+
+describe('parse', () => {
+  const Body = z.object({ name: z.string().trim() });
+
+  it('returns cleaned data and drops unknown keys', () => {
+    expect(parse(Body, { name: '  Run ', role: 'ADMIN' })).toEqual({
+      name: 'Run',
+    });
+  });
+
+  it('treats a missing body as {} -> lists each missing field', () => {
+    try {
+      parse(Body, undefined);
+      expect.unreachable();
+    } catch (err) {
+      expect(err).toBeInstanceOf(z.ZodError);
+      expect((err as z.ZodError).issues[0].path).toEqual(['name']);
+    }
   });
 });

@@ -1,6 +1,10 @@
 import express from 'express';
 import { pinoHttp } from 'pino-http';
+import swaggerUi from 'swagger-ui-express';
+import { env } from './env.ts';
 import { logger } from './logger.ts';
+import { openApiDocument } from './openapi/index.ts';
+import adminRouter from './routes/admin.ts';
 import authRouter from './routes/auth.ts';
 import usersRouter from './routes/users.ts';
 import workoutsRouter from './routes/workouts.ts';
@@ -59,6 +63,18 @@ app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/users', usersRouter);
 // Protected: the owner comes from the access token (requireAuth).
 app.use('/api/v1/workouts', workoutsRouter);
+// Admin only (requireAuth + requireRole inside the router).
+app.use('/api/v1/admin', adminRouter);
+
+// API docs, outside production for now (Phase 15 decides). Hiding docs is
+// not security — auth + roles protect the API. Swagger UI also needs
+// inline scripts, which Helmet's CSP (Phase 14) would block.
+if (env.NODE_ENV !== 'production') {
+  app.get('/openapi.json', (_req, res) => {
+    res.json(openApiDocument);
+  });
+  app.use('/docs', swaggerUi.serve, swaggerUi.setup(openApiDocument));
+}
 
 // Order matters: these go last.
 // 1. No route matched -> 404 JSON.

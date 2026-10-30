@@ -1,5 +1,6 @@
 import bcrypt from 'bcrypt';
 import { prisma } from '../db.ts';
+import type { Role } from '../generated/prisma/client.ts';
 import { sentEmails } from '../lib/email.ts';
 import { signAccessToken } from '../lib/tokens.ts';
 
@@ -16,7 +17,7 @@ let counter = 0;
 
 // Unique email per call, so tests can create several users.
 export function createUser(
-  data: Partial<{ email: string; name: string }> = {},
+  data: Partial<{ email: string; name: string; role: Role }> = {},
 ) {
   counter += 1;
   return prisma.user.create({

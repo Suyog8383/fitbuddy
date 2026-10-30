@@ -87,6 +87,37 @@ describe('POST /api/v1/auth/register', () => {
     expect(res.status).toBe(400);
   });
 
+  it('lists every bad field at once', async () => {
+    const res = await request(app).post(REGISTER).send(undefined);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Invalid request');
+    expect(res.body.details.map((d: { path: string }) => d.path)).toEqual([
+      'email',
+      'name',
+      'password',
+    ]);
+  });
+
+  // Mass assignment: extra fields in the body must never reach the DB.
+  it('ignores fields it does not know (emailVerifiedAt, passwordHash)', async () => {
+    const res = await request(app)
+      .post(REGISTER)
+      .send({
+        ...valid,
+        emailVerifiedAt: '2020-01-01T00:00:00.000Z',
+        passwordHash: 'attacker-chosen-hash',
+      });
+
+    expect(res.status).toBe(201);
+    const stored = await prisma.user.findUniqueOrThrow({
+      where: { id: res.body.id },
+      omit: { passwordHash: false },
+    });
+    expect(stored.emailVerifiedAt).toBeNull();
+    expect(stored.passwordHash).not.toBe('attacker-chosen-hash');
+  });
+
   it('accepts a 72-byte password with spaces', async () => {
     const password = 'a b '.repeat(18); // 72 bytes, spaces kept as-is
     const res = await request(app)
@@ -104,7 +135,10 @@ describe('POST /api/v1/auth/register', () => {
       .send({ ...valid, email: 'SUYOG@mail.com' });
 
     expect(res.status).toBe(409);
-    expect(res.body).toEqual({ error: 'Email already in use' });
+    expect(res.body).toEqual({
+      error: 'Email already in use',
+      code: 'EMAIL_IN_USE',
+    });
   });
 });
 
@@ -176,7 +210,10 @@ describe('POST /api/v1/auth/login', () => {
 
     expect(wrongPassword.status).toBe(401);
     expect(unknownEmail.status).toBe(401);
-    expect(wrongPassword.body).toEqual({ error: 'Invalid email or password' });
+    expect(wrongPassword.body).toEqual({
+      error: 'Invalid email or password',
+      code: 'INVALID_CREDENTIALS',
+    });
     expect(unknownEmail.body).toEqual(wrongPassword.body);
   });
 
@@ -284,7 +321,10 @@ describe('POST /api/v1/auth/refresh', () => {
 
     for (const res of responses) {
       expect(res.status).toBe(401);
-      expect(res.body).toEqual({ error: 'Invalid refresh token' });
+      expect(res.body).toEqual({
+        error: 'Invalid refresh token',
+        code: 'INVALID_REFRESH_TOKEN',
+      });
     }
   });
 
@@ -464,7 +504,10 @@ describe('email verification', () => {
     const res = await verify(auth, code === '000000' ? '111111' : '000000');
 
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: 'Invalid or expired code' });
+    expect(res.body).toEqual({
+      error: 'Invalid or expired code',
+      code: 'INVALID_CODE',
+    });
     const stored = await prisma.user.findUniqueOrThrow({
       where: { id: user.id },
     });
@@ -503,7 +546,11 @@ describe('email verification', () => {
     const res = await verify(auth, code);
 
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: 'code must be 6 digits' });
+    expect(res.body).toEqual({
+      error: 'Invalid request',
+      code: 'VALIDATION_FAILED',
+      details: [{ path: 'code', message: expect.any(String) }],
+    });
   });
 
   it('returns 401 without an access token', async () => {
@@ -662,7 +709,10 @@ describe('password reset', () => {
     const res = await reset({ code: wrong(code) });
 
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: 'Invalid or expired code' });
+    expect(res.body).toEqual({
+      error: 'Invalid or expired code',
+      code: 'INVALID_CODE',
+    });
     const login = await request(app)
       .post(LOGIN)
       .send({ email: EMAIL, password: TEST_PASSWORD });
@@ -704,7 +754,10 @@ describe('password reset', () => {
     const res = await reset({ email: 'nobody@mail.com', code: '123456' });
 
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: 'Invalid or expired code' });
+    expect(res.body).toEqual({
+      error: 'Invalid or expired code',
+      code: 'INVALID_CODE',
+    });
   });
 
   it.each([

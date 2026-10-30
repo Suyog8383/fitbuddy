@@ -8,6 +8,7 @@ beforeEach(async () => {
   await prisma.refreshToken.deleteMany();
   await prisma.emailCode.deleteMany();
   await prisma.workout.deleteMany();
+  await prisma.profile.deleteMany();
   await prisma.user.deleteMany();
   sentEmails.length = 0; // empty the test inbox (same array, now empty)
 });

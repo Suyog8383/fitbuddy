@@ -1,24 +1,8 @@
 import { z } from 'zod';
 import { Prisma } from '../generated/prisma/client.ts';
 
-// Shared request-validation helpers. Replaced by Zod schemas in Phase 4.
-// `unknown` (not `any`) forces a type check before using the value.
-// `v is string` tells TypeScript: if this returns true, v is a string.
-
-export function isValidName(v: unknown): v is string {
-  return typeof v === 'string' && v.trim() !== '';
-}
-
-// Trim before checking: the route trims before saving, so "  a@b.com "
-// is valid input (z.email() alone rejects the spaces).
-export function isValidEmail(v: unknown): v is string {
-  return typeof v === 'string' && z.email().safeParse(v.trim()).success;
-}
-
-// Integer: the DB column is INTEGER, so 20.5 would make Postgres throw (500).
-export function isValidDuration(v: unknown): v is number {
-  return typeof v === 'number' && Number.isInteger(v) && v > 0;
-}
+// Request bodies are checked by Zod schemas (src/schemas/). What's left
+// here: the id check (a bad id is a 404, not a 400) and Prisma error codes.
 
 // Id columns are Postgres UUIDs. Querying with 'abc' makes Postgres throw
 // "invalid input syntax for type uuid" -> 500. Not a UUID = can't exist.
