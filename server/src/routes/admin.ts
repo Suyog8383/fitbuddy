@@ -1,10 +1,12 @@
 import { Router } from 'express';
 import { prisma } from '../db.ts';
-import { HttpError, parse } from '../lib/http.ts';
+import type { z } from 'zod';
+import { ErrorCode, HttpError, parse } from '../lib/http.ts';
 import { toAdminUserResponse } from '../lib/userResponse.ts';
 import { isValidId } from '../lib/validation.ts';
 import { authUser, requireAuth } from '../middleware/requireAuth.ts';
 import { requireRole } from '../middleware/requireRole.ts';
+import type { StatsResponse } from '../schemas/responses.ts';
 import { AdminUpdateUserBody, AdminUsersQuery } from '../schemas/users.ts';
 
 // Mounted at /api/v1/admin. The guard is on the ROUTER, not on each route:
@@ -16,7 +18,8 @@ router.use(requireAuth, requireRole('ADMIN'));
 // Hard cap until real pagination (Phase 11).
 const LIST_LIMIT = 50;
 
-const userNotFound = () => new HttpError(404, 'User not found');
+const userNotFound = () =>
+  new HttpError(404, ErrorCode.USER_NOT_FOUND, 'User not found');
 
 // GET /admin/users?email=part  -> newest first, max 50
 router.get('/users', async (req, res) => {
@@ -52,7 +55,11 @@ router.patch('/users/:id', async (req, res) => {
   // Lockout rule: the last admin demoting or disabling themselves would
   // leave nobody able to fix it without DB access.
   if (id === adminId) {
-    throw new HttpError(400, "You can't change your own account here");
+    throw new HttpError(
+      400,
+      ErrorCode.CANNOT_CHANGE_OWN_ACCOUNT,
+      "You can't change your own account here",
+    );
   }
 
   const changes = parse(AdminUpdateUserBody, req.body);
@@ -104,7 +111,12 @@ router.get('/stats', async (_req, res) => {
     prisma.user.count({ where: { createdAt: { gte: sevenDaysAgo } } }),
   ]);
 
-  res.json({ users, workouts, newUsersLast7Days });
+  const stats: z.infer<typeof StatsResponse> = {
+    users,
+    workouts,
+    newUsersLast7Days,
+  };
+  res.json(stats);
 });
 
 export default router;

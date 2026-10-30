@@ -338,7 +338,10 @@ describe('POST /api/v1/users/me/password', () => {
     });
 
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: 'Current password is incorrect' });
+    expect(res.body).toEqual({
+      error: 'Current password is incorrect',
+      code: 'CURRENT_PASSWORD_INCORRECT',
+    });
     expect((await login()).status).toBe(200);
     expect((await refresh(phone.refreshToken)).status).toBe(200);
   });

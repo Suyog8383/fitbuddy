@@ -25,7 +25,10 @@ describe('unknown routes', () => {
     const res = await request(app).get('/nope');
 
     expect(res.status).toBe(404);
-    expect(res.body).toEqual({ error: 'Route not found: GET /nope' });
+    expect(res.body).toEqual({
+      error: 'Route not found: GET /nope',
+      code: 'ROUTE_NOT_FOUND',
+    });
   });
 
   it('returns 404 for a method the route does not support', async () => {
@@ -43,7 +46,10 @@ describe('errorHandler', () => {
       .send('{bad json');
 
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: 'Invalid JSON body' });
+    expect(res.body).toEqual({
+      error: 'Invalid JSON body',
+      code: 'INVALID_JSON',
+    });
   });
 
   it('returns generic 500 JSON for a thrown error, without leaking details', async () => {
@@ -69,7 +75,10 @@ describe('errorHandler', () => {
 
     // Client: generic message only.
     expect(res.status).toBe(500);
-    expect(res.body).toEqual({ error: 'Internal server error' });
+    expect(res.body).toEqual({
+      error: 'Internal server error',
+      code: 'INTERNAL_ERROR',
+    });
     expect(JSON.stringify(res.body)).not.toContain('secret');
 
     // Logs: full error with stack, tagged with the request id.
@@ -94,15 +103,18 @@ function appThatRuns(handler: express.RequestHandler) {
 }
 
 describe('errorHandler: thrown errors', () => {
-  it('sends an HttpError as its status + message', async () => {
+  it('sends an HttpError as its status, code + message', async () => {
     const testApp = appThatRuns(() => {
-      throw new HttpError(404, 'Workout not found');
+      throw new HttpError(404, 'WORKOUT_NOT_FOUND', 'Workout not found');
     });
 
     const res = await request(testApp).post('/test');
 
     expect(res.status).toBe(404);
-    expect(res.body).toEqual({ error: 'Workout not found' });
+    expect(res.body).toEqual({
+      error: 'Workout not found',
+      code: 'WORKOUT_NOT_FOUND',
+    });
   });
 
   it('turns a ZodError into 400 with every bad field', async () => {
@@ -121,6 +133,7 @@ describe('errorHandler: thrown errors', () => {
     expect(res.status).toBe(400);
     expect(res.body).toEqual({
       error: 'Invalid request',
+      code: 'VALIDATION_FAILED',
       details: [
         { path: 'name', message: expect.any(String) },
         { path: 'goal.target', message: expect.any(String) }, // nested

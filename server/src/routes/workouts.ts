@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../db.ts';
-import { HttpError, parse } from '../lib/http.ts';
+import { ErrorCode, HttpError, parse } from '../lib/http.ts';
+import { toWorkoutResponse } from '../lib/workoutResponse.ts';
 import {
   isForeignKeyViolation,
   isNotFound,
@@ -16,7 +17,8 @@ const router = Router();
 // Every route below needs a valid access token (401 otherwise).
 router.use(requireAuth);
 
-const notFound = () => new HttpError(404, 'Workout not found');
+const notFound = () =>
+  new HttpError(404, ErrorCode.WORKOUT_NOT_FOUND, 'Workout not found');
 
 // Id columns are Postgres UUIDs: querying with 'abc' would make Postgres
 // throw (500). Not a UUID = can't exist -> the same 404 as a missing row,
@@ -41,7 +43,7 @@ router.get('/', async (req, res) => {
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
   });
 
-  res.json(workouts);
+  res.json(workouts.map(toWorkoutResponse));
 });
 
 // GET /workouts/:id
@@ -58,7 +60,7 @@ router.get('/:id', async (req, res) => {
   // else — never reveal that another user's workout exists.
   if (!workout) throw notFound();
 
-  res.json(workout);
+  res.json(toWorkoutResponse(workout));
 });
 
 // POST /workouts
@@ -73,11 +75,12 @@ router.post('/', async (req, res) => {
       // P2003: the token is valid, but its user was deleted after it was
       // issued (JWTs stay valid until exp). The identity is gone -> 401,
       // the client should log out.
-      if (isForeignKeyViolation(err)) throw new HttpError(401, 'Unauthorized');
+      if (isForeignKeyViolation(err))
+        throw new HttpError(401, ErrorCode.UNAUTHORIZED, 'Unauthorized');
       throw err;
     });
 
-  res.status(201).json(workout);
+  res.status(201).json(toWorkoutResponse(workout));
 });
 
 // PATCH /workouts/:id
@@ -93,7 +96,7 @@ router.patch('/:id', async (req, res) => {
     .update({ where: { id, userId }, data })
     .catch(rethrowNotFound);
 
-  res.json(workout);
+  res.json(toWorkoutResponse(workout));
 });
 
 // DELETE /workouts/:id

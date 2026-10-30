@@ -34,7 +34,10 @@ describe('admin guard (requireAuth + requireRole)', () => {
       .set('Authorization', await authHeader(user.id));
 
     expect(res.status).toBe(403);
-    expect(res.body).toEqual({ error: 'Forbidden' });
+    expect(res.body).toEqual({
+      error: 'Forbidden',
+      code: 'FORBIDDEN',
+    });
   });
 
   it('protects every admin path, even unknown ones', async () => {
@@ -73,6 +76,12 @@ describe('GET /api/v1/admin/users', () => {
   it('lists users newest first, account fields only (no profile, no hash)', async () => {
     const user = await createUser({ email: 'suyog@mail.com' });
     await prisma.profile.create({ data: { userId: user.id, weightKg: 72 } });
+    // Both rows can be created in the same millisecond -> createdAt ties ->
+    // the id tie-breaker (random UUIDs) decides = flaky. Make it explicit.
+    await prisma.user.update({
+      where: { id: adminId },
+      data: { createdAt: new Date('2026-01-01T00:00:00Z') },
+    });
 
     const res = await asAdmin(USERS);
 
@@ -144,7 +153,10 @@ describe('GET /api/v1/admin/users/:id', () => {
     const res = await asAdmin(`${USERS}/${id}`);
 
     expect(res.status).toBe(404);
-    expect(res.body).toEqual({ error: 'User not found' });
+    expect(res.body).toEqual({
+      error: 'User not found',
+      code: 'USER_NOT_FOUND',
+    });
   });
 });
 
@@ -202,7 +214,10 @@ describe('PATCH /api/v1/admin/users/:id', () => {
     expect((await refresh(session.refreshToken)).status).toBe(401);
     const blocked = await login();
     expect(blocked.status).toBe(403);
-    expect(blocked.body).toEqual({ error: 'Account disabled' });
+    expect(blocked.body).toEqual({
+      error: 'Account disabled',
+      code: 'ACCOUNT_DISABLED',
+    });
   });
 
   it('a wrong password on a disabled account still says 401 (no probing)', async () => {

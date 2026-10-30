@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
+import { ErrorCode } from '../lib/http.ts';
 import { verifyAccessToken } from '../lib/tokens.ts';
 
 // Protects a route: only requests with a valid access token get through.
@@ -24,7 +25,9 @@ export async function requireAuth(
     req.log.debug({ err }, 'unauthenticated request');
     // Standard header telling the client which auth scheme to use.
     res.setHeader('WWW-Authenticate', 'Bearer');
-    res.status(401).json({ error: 'Unauthorized' });
+    res
+      .status(401)
+      .json({ error: 'Unauthorized', code: ErrorCode.UNAUTHORIZED });
     return;
   }
 

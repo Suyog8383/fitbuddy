@@ -57,7 +57,10 @@ describe('requireAuth', () => {
     const res = await req;
 
     expect(res.status).toBe(401);
-    expect(res.body).toEqual({ error: 'Unauthorized' });
+    expect(res.body).toEqual({
+      error: 'Unauthorized',
+      code: 'UNAUTHORIZED',
+    });
     expect(res.headers['www-authenticate']).toBe('Bearer');
   });
 

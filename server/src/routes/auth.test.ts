@@ -135,7 +135,10 @@ describe('POST /api/v1/auth/register', () => {
       .send({ ...valid, email: 'SUYOG@mail.com' });
 
     expect(res.status).toBe(409);
-    expect(res.body).toEqual({ error: 'Email already in use' });
+    expect(res.body).toEqual({
+      error: 'Email already in use',
+      code: 'EMAIL_IN_USE',
+    });
   });
 });
 
@@ -207,7 +210,10 @@ describe('POST /api/v1/auth/login', () => {
 
     expect(wrongPassword.status).toBe(401);
     expect(unknownEmail.status).toBe(401);
-    expect(wrongPassword.body).toEqual({ error: 'Invalid email or password' });
+    expect(wrongPassword.body).toEqual({
+      error: 'Invalid email or password',
+      code: 'INVALID_CREDENTIALS',
+    });
     expect(unknownEmail.body).toEqual(wrongPassword.body);
   });
 
@@ -315,7 +321,10 @@ describe('POST /api/v1/auth/refresh', () => {
 
     for (const res of responses) {
       expect(res.status).toBe(401);
-      expect(res.body).toEqual({ error: 'Invalid refresh token' });
+      expect(res.body).toEqual({
+        error: 'Invalid refresh token',
+        code: 'INVALID_REFRESH_TOKEN',
+      });
     }
   });
 
@@ -495,7 +504,10 @@ describe('email verification', () => {
     const res = await verify(auth, code === '000000' ? '111111' : '000000');
 
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: 'Invalid or expired code' });
+    expect(res.body).toEqual({
+      error: 'Invalid or expired code',
+      code: 'INVALID_CODE',
+    });
     const stored = await prisma.user.findUniqueOrThrow({
       where: { id: user.id },
     });
@@ -536,6 +548,7 @@ describe('email verification', () => {
     expect(res.status).toBe(400);
     expect(res.body).toEqual({
       error: 'Invalid request',
+      code: 'VALIDATION_FAILED',
       details: [{ path: 'code', message: expect.any(String) }],
     });
   });
@@ -696,7 +709,10 @@ describe('password reset', () => {
     const res = await reset({ code: wrong(code) });
 
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: 'Invalid or expired code' });
+    expect(res.body).toEqual({
+      error: 'Invalid or expired code',
+      code: 'INVALID_CODE',
+    });
     const login = await request(app)
       .post(LOGIN)
       .send({ email: EMAIL, password: TEST_PASSWORD });
@@ -738,7 +754,10 @@ describe('password reset', () => {
     const res = await reset({ email: 'nobody@mail.com', code: '123456' });
 
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: 'Invalid or expired code' });
+    expect(res.body).toEqual({
+      error: 'Invalid or expired code',
+      code: 'INVALID_CODE',
+    });
   });
 
   it.each([

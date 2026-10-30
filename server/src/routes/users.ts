@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { prisma } from '../db.ts';
-import { HttpError, parse } from '../lib/http.ts';
+import { ErrorCode, HttpError, parse } from '../lib/http.ts';
 import { hashPassword, verifyPassword } from '../lib/password.ts';
 import { issueRefreshToken } from '../lib/refreshTokens.ts';
 import { signAccessToken } from '../lib/tokens.ts';
@@ -18,7 +18,8 @@ router.use(requireAuth);
 
 // A valid token whose user was deleted (JWTs stay valid until exp):
 // the identity no longer exists -> 401, the client should log out.
-const unauthorized = () => new HttpError(401, 'Unauthorized');
+const unauthorized = () =>
+  new HttpError(401, ErrorCode.UNAUTHORIZED, 'Unauthorized');
 
 // GET /api/v1/users/me -> user + profile (null if never filled in)
 router.get('/me', async (req, res) => {
@@ -76,7 +77,11 @@ router.post('/me/password', async (req, res) => {
   if (!(await verifyPassword(currentPassword, user.passwordHash))) {
     // 400, NOT 401: the app treats 401 as "session expired" and logs the
     // user out. A typo in the current password must not do that.
-    throw new HttpError(400, 'Current password is incorrect');
+    throw new HttpError(
+      400,
+      ErrorCode.CURRENT_PASSWORD_INCORRECT,
+      'Current password is incorrect',
+    );
   }
 
   // bcrypt (~250 ms) outside the transaction: keep transactions short.

@@ -10,7 +10,7 @@ import {
   revokeFamily,
   rotateRefreshToken,
 } from '../lib/refreshTokens.ts';
-import { HttpError, parse } from '../lib/http.ts';
+import { ErrorCode, HttpError, parse } from '../lib/http.ts';
 import { signAccessToken } from '../lib/tokens.ts';
 import { toUserResponse } from '../lib/userResponse.ts';
 import { isUniqueViolation } from '../lib/validation.ts';
@@ -58,8 +58,10 @@ async function sendCodeEmail(
 }
 
 // Wrong, expired, used, out of attempts, unknown email — one answer for all.
-const invalidCode = () => new HttpError(400, 'Invalid or expired code');
-const unauthorized = () => new HttpError(401, 'Unauthorized');
+const invalidCode = () =>
+  new HttpError(400, ErrorCode.INVALID_CODE, 'Invalid or expired code');
+const unauthorized = () =>
+  new HttpError(401, ErrorCode.UNAUTHORIZED, 'Unauthorized');
 
 // POST /api/v1/auth/register
 router.post('/register', async (req, res) => {
@@ -78,7 +80,11 @@ router.post('/register', async (req, res) => {
         // Reveals that the email is registered (enumeration) — accepted:
         // forgot-password (the endpoint attackers probe) hides it, and
         // rate limiting (Phase 11) slows bulk probing.
-        throw new HttpError(409, 'Email already in use');
+        throw new HttpError(
+          409,
+          ErrorCode.EMAIL_IN_USE,
+          'Email already in use',
+        );
       }
       throw err; // anything else is a bug -> 500
     });
@@ -114,12 +120,17 @@ router.post('/login', async (req, res) => {
 
   if (!user || !passwordOk) {
     // One message for both cases: never say which part was wrong.
-    throw new HttpError(401, 'Invalid email or password');
+    throw new HttpError(
+      401,
+      ErrorCode.INVALID_CREDENTIALS,
+      'Invalid email or password',
+    );
   }
 
   // Checked only AFTER the password: otherwise anyone could probe which
   // accounts are disabled. 403: who you are is fine, you just can't log in.
-  if (user.disabledAt) throw new HttpError(403, 'Account disabled');
+  if (user.disabledAt)
+    throw new HttpError(403, ErrorCode.ACCOUNT_DISABLED, 'Account disabled');
 
   // The app stores both in expo-secure-store.
   // accessToken: sent on every request (`Authorization: Bearer ...`), 15 min.
@@ -149,7 +160,11 @@ router.post('/refresh', async (req, res) => {
       req.log.debug({ reason: result.reason }, 'refresh rejected');
     }
     // One answer for every failure: the client just logs the user out.
-    throw new HttpError(401, 'Invalid refresh token');
+    throw new HttpError(
+      401,
+      ErrorCode.INVALID_REFRESH_TOKEN,
+      'Invalid refresh token',
+    );
   }
 
   // Disabling revokes all tokens, so this is a second line of defence
@@ -160,7 +175,11 @@ router.post('/refresh', async (req, res) => {
     select: { disabledAt: true },
   });
   if (!owner || owner.disabledAt) {
-    throw new HttpError(401, 'Invalid refresh token');
+    throw new HttpError(
+      401,
+      ErrorCode.INVALID_REFRESH_TOKEN,
+      'Invalid refresh token',
+    );
   }
 
   // The OLD refresh token is now dead: the app must save the new one.
@@ -262,7 +281,11 @@ router.post('/resend-verification', requireAuth, async (req, res) => {
     // The user explicitly asked for an email: say honestly it didn't go.
     // 503 = temporary, try again later.
     req.log.error({ err }, 'verification email failed');
-    throw new HttpError(503, 'Could not send email, try again later');
+    throw new HttpError(
+      503,
+      ErrorCode.EMAIL_SEND_FAILED,
+      'Could not send email, try again later',
+    );
   }
 
   res.status(204).send();

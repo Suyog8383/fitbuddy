@@ -54,7 +54,10 @@ describe('without a token', () => {
     const res = await send();
 
     expect(res.status).toBe(401);
-    expect(res.body).toEqual({ error: 'Unauthorized' });
+    expect(res.body).toEqual({
+      error: 'Unauthorized',
+      code: 'UNAUTHORIZED',
+    });
   });
 });
 
@@ -102,6 +105,13 @@ describe('GET /workouts', () => {
   it('lists only my workouts, newest first', async () => {
     const first = await createWorkout({ name: 'Run', durationMin: 30 });
     const second = await createWorkout({ name: 'Swim', durationMin: 45 });
+    // Two quick creates can share a millisecond -> tie -> random order.
+    // Push `first` clearly into the past so the order is deterministic.
+    first.createdAt = '2026-01-01T00:00:00.000Z';
+    await prisma.workout.update({
+      where: { id: first.id },
+      data: { createdAt: new Date(first.createdAt) },
+    });
     // Another user's workout must not appear.
     const other = await createUser();
     await prisma.workout.create({
@@ -131,7 +141,10 @@ describe('GET /workouts/:id', () => {
       const res = await api.get(`${URL}/${id}`);
 
       expect(res.status).toBe(404);
-      expect(res.body).toEqual({ error: 'Workout not found' });
+      expect(res.body).toEqual({
+        error: 'Workout not found',
+        code: 'WORKOUT_NOT_FOUND',
+      });
     },
   );
 });
