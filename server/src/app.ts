@@ -1,5 +1,7 @@
 import express from 'express';
 import workoutsRouter from './routes/workouts.ts';
+import { notFound } from './middleware/notFound.ts';
+import { errorHandler } from './middleware/errorHandler.ts';
 
 const app = express();
 
@@ -15,5 +17,11 @@ app.get('/health', (_req, res) => {
 // Mount the router: every path inside it is prefixed with /api/v1/workouts.
 // /v1 = API version, so a breaking change later can go to /v2.
 app.use('/api/v1/workouts', workoutsRouter);
+
+// Order matters: these go last.
+// 1. No route matched -> 404 JSON.
+app.use(notFound);
+// 2. Any thrown error -> JSON 400/500.
+app.use(errorHandler);
 
 export default app;
