@@ -4,9 +4,16 @@ import app from '../app.ts';
 
 const URL = '/api/v1/workouts';
 
-// The workouts array is shared in memory across all tests in this file.
-// So each test creates the workout it needs and uses that id — never
-// assume what else is in the list or how many items it has.
+// Tests run against the fitbuddy_test database, emptied before each test
+// (src/test/setup.ts). Each test creates the workouts it needs.
+
+// Two kinds of "unknown id":
+// - not a UUID -> rejected by isValidId, no query runs
+// - a valid UUID with no row -> query runs; update/delete throw P2025
+const UNKNOWN_IDS = [
+  ['not a UUID', 'does-not-exist'],
+  ['valid UUID, no row', '00000000-0000-4000-8000-000000000000'],
+];
 async function createWorkout(body = { name: 'Yoga', durationMin: 20 }) {
   const res = await request(app).post(URL).send(body);
   return res.body;
@@ -34,6 +41,7 @@ describe('POST /api/v1/workouts', () => {
     ['durationMin as string', { name: 'Yoga', durationMin: 'abc' }],
     ['durationMin zero', { name: 'Yoga', durationMin: 0 }],
     ['durationMin negative', { name: 'Yoga', durationMin: -5 }],
+    ['durationMin not an integer', { name: 'Yoga', durationMin: 20.5 }],
   ])('returns 400 for %s', async (_label, body) => {
     const res = await request(app).post(URL).send(body);
 
@@ -63,12 +71,15 @@ describe('GET /api/v1/workouts/:id', () => {
     expect(res.body).toEqual(created);
   });
 
-  it('returns 404 for an unknown id', async () => {
-    const res = await request(app).get(`${URL}/does-not-exist`);
+  it.each(UNKNOWN_IDS)(
+    'returns 404 for unknown id (%s)',
+    async (_label, id) => {
+      const res = await request(app).get(`${URL}/${id}`);
 
-    expect(res.status).toBe(404);
-    expect(res.body).toEqual({ error: 'Workout not found' });
-  });
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual({ error: 'Workout not found' });
+    },
+  );
 });
 
 describe('PATCH /api/v1/workouts/:id', () => {
@@ -83,19 +94,23 @@ describe('PATCH /api/v1/workouts/:id', () => {
     expect(res.body).toEqual({ ...created, durationMin: 45 });
   });
 
-  it('returns 404 for an unknown id', async () => {
-    const res = await request(app)
-      .patch(`${URL}/does-not-exist`)
-      .send({ durationMin: 45 });
+  it.each(UNKNOWN_IDS)(
+    'returns 404 for unknown id (%s)',
+    async (_label, id) => {
+      const res = await request(app)
+        .patch(`${URL}/${id}`)
+        .send({ durationMin: 45 });
 
-    expect(res.status).toBe(404);
-  });
+      expect(res.status).toBe(404);
+    },
+  );
 
   it.each([
     ['name not a string', { name: [] }],
     ['empty name', { name: '' }],
     ['durationMin zero', { durationMin: 0 }],
     ['durationMin negative', { durationMin: -5 }],
+    ['durationMin not an integer', { durationMin: 20.5 }],
   ])('returns 400 for %s', async (_label, body) => {
     const created = await createWorkout();
 
@@ -130,9 +145,12 @@ describe('DELETE /api/v1/workouts/:id', () => {
     expect(after.status).toBe(404);
   });
 
-  it('returns 404 for an unknown id', async () => {
-    const res = await request(app).delete(`${URL}/does-not-exist`);
+  it.each(UNKNOWN_IDS)(
+    'returns 404 for unknown id (%s)',
+    async (_label, id) => {
+      const res = await request(app).delete(`${URL}/${id}`);
 
-    expect(res.status).toBe(404);
-  });
+      expect(res.status).toBe(404);
+    },
+  );
 });

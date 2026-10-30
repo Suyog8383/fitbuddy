@@ -4,19 +4,25 @@ import { EnvSchema } from './env.ts';
 // Test the schema with fake input objects, not the real `env` export:
 // importing env.ts parses the real process.env (and exits on failure).
 
+// Required vars (no default). Spread into every input: { ...BASE, PORT: '3000' }
+const BASE = {
+  DATABASE_URL: 'postgresql://user:pass@localhost:5432/db',
+};
+
 describe('EnvSchema', () => {
   it('coerces PORT to a number', () => {
-    const result = EnvSchema.safeParse({ PORT: '3000' });
+    const result = EnvSchema.safeParse({ ...BASE, PORT: '3000' });
 
     expect(result.success).toBe(true);
     expect(result.data?.PORT).toBe(3000);
   });
 
-  it('applies defaults when nothing is set', () => {
-    const result = EnvSchema.safeParse({});
+  it('applies defaults when only required vars are set', () => {
+    const result = EnvSchema.safeParse(BASE);
 
     expect(result.success).toBe(true);
     expect(result.data).toEqual({
+      ...BASE,
       NODE_ENV: 'development',
       PORT: 3000,
       APP_NAME: 'FitBuddy',
@@ -24,17 +30,20 @@ describe('EnvSchema', () => {
   });
 
   it('accepts a valid LOG_LEVEL', () => {
-    const result = EnvSchema.safeParse({ LOG_LEVEL: 'debug' });
+    const result = EnvSchema.safeParse({ ...BASE, LOG_LEVEL: 'debug' });
 
     expect(result.success).toBe(true);
     expect(result.data?.LOG_LEVEL).toBe('debug');
   });
 
   it.each([
-    ['PORT not a number', { PORT: 'abc' }],
-    ['PORT above max', { PORT: '70000' }],
-    ['NODE_ENV not allowed', { NODE_ENV: 'prod' }],
-    ['LOG_LEVEL not allowed', { LOG_LEVEL: 'loud' }],
+    ['PORT not a number', { ...BASE, PORT: 'abc' }],
+    ['PORT above max', { ...BASE, PORT: '70000' }],
+    ['NODE_ENV not allowed', { ...BASE, NODE_ENV: 'prod' }],
+    ['LOG_LEVEL not allowed', { ...BASE, LOG_LEVEL: 'loud' }],
+    ['DATABASE_URL missing', {}],
+    ['DATABASE_URL not postgres', { DATABASE_URL: 'mysql://u:p@localhost/db' }],
+    ['DATABASE_URL not a URL', { DATABASE_URL: 'not-a-url' }],
   ])('fails when %s', (_label, input) => {
     expect(EnvSchema.safeParse(input).success).toBe(false);
   });

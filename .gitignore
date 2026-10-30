@@ -5,3 +5,6 @@ node_modules/
 .expo/
 dist/
 .DS_Store
+
+# Prisma generated client (rebuilt by `prisma generate`)
+server/src/generated/
