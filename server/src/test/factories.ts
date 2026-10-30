@@ -1,5 +1,6 @@
 import bcrypt from 'bcrypt';
 import { prisma } from '../db.ts';
+import { signAccessToken } from '../lib/tokens.ts';
 
 // Test data builders: create rows straight in the DB with sensible defaults.
 
@@ -25,4 +26,11 @@ export function createUser(
       ...data,
     },
   });
+}
+
+// Authorization header value for a user: `.set('Authorization', await
+// authHeader(user.id))`. Signs a token directly — faster than calling
+// /auth/login (bcrypt) in every test. Login itself is tested in auth.test.ts.
+export async function authHeader(userId: string): Promise<string> {
+  return `Bearer ${await signAccessToken(userId)}`;
 }

@@ -3,6 +3,7 @@ import request from 'supertest';
 import app from '../app.ts';
 import { prisma } from '../db.ts';
 import { verifyPassword } from '../lib/password.ts';
+import { verifyAccessToken } from '../lib/tokens.ts';
 import { createUser, TEST_PASSWORD } from '../test/factories.ts';
 
 const REGISTER = '/api/v1/auth/register';
@@ -94,7 +95,7 @@ describe('POST /api/v1/auth/register', () => {
 });
 
 describe('POST /api/v1/auth/login', () => {
-  it('returns 200 and the user (no hash) for the right password', async () => {
+  it('returns 200 with the user (no hash) and an access token for them', async () => {
     const user = await createUser({ email: 'suyog@mail.com' });
 
     const res = await request(app)
@@ -102,8 +103,15 @@ describe('POST /api/v1/auth/login', () => {
       .send({ email: 'suyog@mail.com', password: TEST_PASSWORD });
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ id: user.id, email: 'suyog@mail.com' });
-    expect(res.body).not.toHaveProperty('passwordHash');
+    expect(res.body.user).toMatchObject({
+      id: user.id,
+      email: 'suyog@mail.com',
+    });
+    expect(res.body.user).not.toHaveProperty('passwordHash');
+    // The token really belongs to this user.
+    await expect(verifyAccessToken(res.body.accessToken)).resolves.toBe(
+      user.id,
+    );
   });
 
   it('matches the email in any letter case, with spaces around it', async () => {

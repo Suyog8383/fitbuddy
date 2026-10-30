@@ -7,6 +7,7 @@ import { EnvSchema } from './env.ts';
 // Required vars (no default). Spread into every input: { ...BASE, PORT: '3000' }
 const BASE = {
   DATABASE_URL: 'postgresql://user:pass@localhost:5432/db',
+  JWT_SECRET: 'x'.repeat(32),
 };
 
 describe('EnvSchema', () => {
@@ -41,9 +42,14 @@ describe('EnvSchema', () => {
     ['PORT above max', { ...BASE, PORT: '70000' }],
     ['NODE_ENV not allowed', { ...BASE, NODE_ENV: 'prod' }],
     ['LOG_LEVEL not allowed', { ...BASE, LOG_LEVEL: 'loud' }],
-    ['DATABASE_URL missing', {}],
-    ['DATABASE_URL not postgres', { DATABASE_URL: 'mysql://u:p@localhost/db' }],
-    ['DATABASE_URL not a URL', { DATABASE_URL: 'not-a-url' }],
+    ['DATABASE_URL missing', { ...BASE, DATABASE_URL: undefined }],
+    [
+      'DATABASE_URL not postgres',
+      { ...BASE, DATABASE_URL: 'mysql://u:p@localhost/db' },
+    ],
+    ['DATABASE_URL not a URL', { ...BASE, DATABASE_URL: 'not-a-url' }],
+    ['JWT_SECRET missing', { ...BASE, JWT_SECRET: undefined }],
+    ['JWT_SECRET too short', { ...BASE, JWT_SECRET: 'change-me' }],
   ])('fails when %s', (_label, input) => {
     expect(EnvSchema.safeParse(input).success).toBe(false);
   });

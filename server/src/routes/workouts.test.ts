@@ -2,11 +2,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import app from '../app.ts';
 import { prisma } from '../db.ts';
-import { createUser } from '../test/factories.ts';
+import { authHeader, createUser } from '../test/factories.ts';
 
 // Tests run against the fitbuddy_test database, emptied before each test
 // (src/test/setup.ts). Each test creates the data it needs.
 
+const URL = '/api/v1/workouts';
 const MISSING_ID = '00000000-0000-4000-8000-000000000000';
 
 // Two kinds of "unknown id":
@@ -17,32 +18,65 @@ const UNKNOWN_IDS = [
   ['valid UUID, no row', MISSING_ID],
 ];
 
-// Fresh owner for every test. setup.ts deletes all users first,
+// Fresh logged-in owner for every test. setup.ts deletes all users first,
 // so this beforeEach runs after the cleanup.
 let userId: string;
-let url: string; // /api/v1/users/<userId>/workouts
+let auth: string; // "Bearer <token>"
 
 beforeEach(async () => {
   const user = await createUser();
   userId = user.id;
-  url = `/api/v1/users/${userId}/workouts`;
+  auth = await authHeader(userId);
 });
 
+// Requests as the logged-in owner.
+const api = {
+  get: (path: string) => request(app).get(path).set('Authorization', auth),
+  post: (path: string) => request(app).post(path).set('Authorization', auth),
+  patch: (path: string) => request(app).patch(path).set('Authorization', auth),
+  delete: (path: string) =>
+    request(app).delete(path).set('Authorization', auth),
+};
+
 async function createWorkout(body = { name: 'Yoga', durationMin: 20 }) {
-  const res = await request(app).post(url).send(body);
+  const res = await api.post(URL).send(body);
   return res.body;
 }
 
-describe('POST /users/:userId/workouts', () => {
-  it('creates a workout for the user and returns 201', async () => {
-    const res = await request(app)
-      .post(url)
-      .send({ name: '  Run  ', durationMin: 30 });
+describe('without a token', () => {
+  it.each([
+    ['GET list', () => request(app).get(URL)],
+    ['GET one', () => request(app).get(`${URL}/${MISSING_ID}`)],
+    ['POST', () => request(app).post(URL).send({ name: 'X', durationMin: 1 })],
+    ['PATCH', () => request(app).patch(`${URL}/${MISSING_ID}`).send({})],
+    ['DELETE', () => request(app).delete(`${URL}/${MISSING_ID}`)],
+  ])('%s returns 401', async (_label, send) => {
+    const res = await send();
+
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: 'Unauthorized' });
+  });
+});
+
+describe('POST /workouts', () => {
+  it('creates a workout for the logged-in user and returns 201', async () => {
+    const res = await api.post(URL).send({ name: '  Run  ', durationMin: 30 });
 
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ name: 'Run', durationMin: 30, userId });
     expect(res.body.id).toEqual(expect.any(String));
     expect(res.body.createdAt).toEqual(expect.any(String));
+  });
+
+  it('ignores a userId in the body — the owner comes from the token', async () => {
+    const other = await createUser();
+
+    const res = await api
+      .post(URL)
+      .send({ name: 'Run', durationMin: 30, userId: other.id });
+
+    expect(res.status).toBe(201);
+    expect(res.body.userId).toBe(userId);
   });
 
   // it.each runs the same test once per row — one test per bad input.
@@ -57,27 +91,15 @@ describe('POST /users/:userId/workouts', () => {
     ['durationMin negative', { name: 'Yoga', durationMin: -5 }],
     ['durationMin not an integer', { name: 'Yoga', durationMin: 20.5 }],
   ])('returns 400 for %s', async (_label, body) => {
-    const res = await request(app).post(url).send(body);
+    const res = await api.post(URL).send(body);
 
     expect(res.status).toBe(400);
     expect(res.body.error).toEqual(expect.any(String));
   });
-
-  it.each(UNKNOWN_IDS)(
-    'returns 404 for unknown user (%s)',
-    async (_label, badUserId) => {
-      const res = await request(app)
-        .post(`/api/v1/users/${badUserId}/workouts`)
-        .send({ name: 'Yoga', durationMin: 20 });
-
-      expect(res.status).toBe(404);
-      expect(res.body).toEqual({ error: 'User not found' });
-    },
-  );
 });
 
-describe('GET /users/:userId/workouts', () => {
-  it("lists only this user's workouts, newest first", async () => {
+describe('GET /workouts', () => {
+  it('lists only my workouts, newest first', async () => {
     const first = await createWorkout({ name: 'Run', durationMin: 30 });
     const second = await createWorkout({ name: 'Swim', durationMin: 45 });
     // Another user's workout must not appear.
@@ -86,24 +108,18 @@ describe('GET /users/:userId/workouts', () => {
       data: { name: 'Not mine', durationMin: 10, userId: other.id },
     });
 
-    const res = await request(app).get(url);
+    const res = await api.get(URL);
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual([second, first]);
   });
-
-  it('returns 404 for a non-UUID user id', async () => {
-    const res = await request(app).get('/api/v1/users/nope/workouts');
-
-    expect(res.status).toBe(404);
-  });
 });
 
-describe('GET /users/:userId/workouts/:id', () => {
+describe('GET /workouts/:id', () => {
   it('returns the workout', async () => {
     const created = await createWorkout();
 
-    const res = await request(app).get(`${url}/${created.id}`);
+    const res = await api.get(`${URL}/${created.id}`);
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual(created);
@@ -112,7 +128,7 @@ describe('GET /users/:userId/workouts/:id', () => {
   it.each(UNKNOWN_IDS)(
     'returns 404 for unknown id (%s)',
     async (_label, id) => {
-      const res = await request(app).get(`${url}/${id}`);
+      const res = await api.get(`${URL}/${id}`);
 
       expect(res.status).toBe(404);
       expect(res.body).toEqual({ error: 'Workout not found' });
@@ -120,12 +136,12 @@ describe('GET /users/:userId/workouts/:id', () => {
   );
 });
 
-describe('PATCH /users/:userId/workouts/:id', () => {
+describe('PATCH /workouts/:id', () => {
   it('updates only the fields sent', async () => {
     const created = await createWorkout({ name: 'Swim', durationMin: 40 });
 
-    const res = await request(app)
-      .patch(`${url}/${created.id}`)
+    const res = await api
+      .patch(`${URL}/${created.id}`)
       .send({ durationMin: 45 });
 
     expect(res.status).toBe(200);
@@ -135,9 +151,7 @@ describe('PATCH /users/:userId/workouts/:id', () => {
   it.each(UNKNOWN_IDS)(
     'returns 404 for unknown id (%s)',
     async (_label, id) => {
-      const res = await request(app)
-        .patch(`${url}/${id}`)
-        .send({ durationMin: 45 });
+      const res = await api.patch(`${URL}/${id}`).send({ durationMin: 45 });
 
       expect(res.status).toBe(404);
     },
@@ -152,7 +166,7 @@ describe('PATCH /users/:userId/workouts/:id', () => {
   ])('returns 400 for %s', async (_label, body) => {
     const created = await createWorkout();
 
-    const res = await request(app).patch(`${url}/${created.id}`).send(body);
+    const res = await api.patch(`${URL}/${created.id}`).send(body);
 
     expect(res.status).toBe(400);
   });
@@ -160,71 +174,77 @@ describe('PATCH /users/:userId/workouts/:id', () => {
   it('does not half-update when one field is invalid', async () => {
     const created = await createWorkout({ name: 'Bike', durationMin: 60 });
 
-    await request(app)
-      .patch(`${url}/${created.id}`)
+    await api
+      .patch(`${URL}/${created.id}`)
       .send({ name: 'New name', durationMin: -1 });
 
-    const res = await request(app).get(`${url}/${created.id}`);
+    const res = await api.get(`${URL}/${created.id}`);
     expect(res.body).toEqual(created); // nothing changed
   });
 });
 
-describe('DELETE /users/:userId/workouts/:id', () => {
+describe('DELETE /workouts/:id', () => {
   it('deletes the workout and returns 204 with no body', async () => {
     const created = await createWorkout();
 
-    const res = await request(app).delete(`${url}/${created.id}`);
+    const res = await api.delete(`${URL}/${created.id}`);
 
     expect(res.status).toBe(204);
     expect(res.text).toBe('');
 
     // It's really gone.
-    const after = await request(app).get(`${url}/${created.id}`);
+    const after = await api.get(`${URL}/${created.id}`);
     expect(after.status).toBe(404);
   });
 
   it.each(UNKNOWN_IDS)(
     'returns 404 for unknown id (%s)',
     async (_label, id) => {
-      const res = await request(app).delete(`${url}/${id}`);
+      const res = await api.delete(`${URL}/${id}`);
 
       expect(res.status).toBe(404);
     },
   );
 });
 
-// IDOR: user B must not reach user A's workout by putting A's workout id
-// in B's URL. Every route must answer 404 — the same as "doesn't exist",
+// IDOR: user B, logged in with B's own valid token, asks for A's workout
+// by id. Every route must answer 404 — the same as "doesn't exist",
 // so B can't even learn that the workout exists.
 describe("another user's workout (IDOR)", () => {
-  let aWorkout: { id: string };
-  let bUrl: string;
+  let aWorkoutUrl: string;
+  let bAuth: string;
 
   beforeEach(async () => {
-    aWorkout = await createWorkout({ name: "A's run", durationMin: 30 });
+    const aWorkout = await createWorkout({ name: "A's run", durationMin: 30 });
+    aWorkoutUrl = `${URL}/${aWorkout.id}`;
     const userB = await createUser();
-    bUrl = `/api/v1/users/${userB.id}/workouts/${aWorkout.id}`;
+    bAuth = await authHeader(userB.id);
   });
 
   it('GET returns 404', async () => {
-    const res = await request(app).get(bUrl);
+    const res = await request(app).get(aWorkoutUrl).set('Authorization', bAuth);
+
     expect(res.status).toBe(404);
   });
 
   it('PATCH returns 404 and changes nothing', async () => {
-    const res = await request(app).patch(bUrl).send({ name: 'Hacked' });
+    const res = await request(app)
+      .patch(aWorkoutUrl)
+      .set('Authorization', bAuth)
+      .send({ name: 'Hacked' });
 
     expect(res.status).toBe(404);
-    const stored = await prisma.workout.findUnique({
-      where: { id: aWorkout.id },
-    });
-    expect(stored?.name).toBe("A's run");
+    const stored = await api.get(aWorkoutUrl);
+    expect(stored.body.name).toBe("A's run");
   });
 
   it('DELETE returns 404 and deletes nothing', async () => {
-    const res = await request(app).delete(bUrl);
+    const res = await request(app)
+      .delete(aWorkoutUrl)
+      .set('Authorization', bAuth);
 
     expect(res.status).toBe(404);
-    expect(await prisma.workout.count({ where: { id: aWorkout.id } })).toBe(1);
+    const stored = await api.get(aWorkoutUrl);
+    expect(stored.status).toBe(200);
   });
 });

@@ -27,7 +27,7 @@ describe('unknown routes', () => {
   });
 
   it('returns 404 for a method the route does not support', async () => {
-    const res = await request(app).put('/api/v1/users');
+    const res = await request(app).put('/health');
 
     expect(res.status).toBe(404);
   });

@@ -6,6 +6,7 @@ import {
   isValidPassword,
   verifyPassword,
 } from '../lib/password.ts';
+import { signAccessToken } from '../lib/tokens.ts';
 import {
   isUniqueViolation,
   isValidEmail,
@@ -91,8 +92,11 @@ router.post('/login', async (req, res) => {
 
   // We asked for the hash, so strip it ourselves before responding.
   const { passwordHash, ...safeUser } = user;
-  // 3B: respond with an access token here instead.
-  res.json(safeUser);
+
+  // The app stores this (expo-secure-store) and sends it on every request:
+  // `Authorization: Bearer <accessToken>`.
+  const accessToken = await signAccessToken(user.id);
+  res.json({ user: safeUser, accessToken });
 });
 
 export default router;

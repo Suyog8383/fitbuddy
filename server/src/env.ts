@@ -23,8 +23,9 @@ export const EnvSchema = z.object({
   // Must be a postgres:// or postgresql:// URL.
   DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
 
-  // Secrets later (Phase 3), same rule:
-  // JWT_SECRET: z.string().min(32),
+  // Signs access tokens. Anyone with it can forge a login for any user.
+  // Secret -> no default. 32+ chars so it can't be brute-forced offline.
+  JWT_SECRET: z.string().min(32),
 });
 
 // TS type generated from the schema — never written by hand.
