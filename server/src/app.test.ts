@@ -27,7 +27,7 @@ describe('unknown routes', () => {
   });
 
   it('returns 404 for a method the route does not support', async () => {
-    const res = await request(app).put('/api/v1/workouts');
+    const res = await request(app).put('/api/v1/users');
 
     expect(res.status).toBe(404);
   });
@@ -36,7 +36,7 @@ describe('unknown routes', () => {
 describe('errorHandler', () => {
   it('returns 400 JSON for malformed JSON', async () => {
     const res = await request(app)
-      .post('/api/v1/workouts')
+      .post('/api/v1/users')
       .set('Content-Type', 'application/json')
       .send('{bad json');
 

@@ -1,62 +1,77 @@
 import { Router } from 'express';
+import { prisma } from '../db.ts';
+import {
+  isForeignKeyViolation,
+  isNotFound,
+  isValidDuration,
+  isValidId,
+  isValidName,
+} from '../lib/validation.ts';
 
-type Workout = {
-  id: string;
-  name: string;
-  durationMin: number;
-  createdAt: string;
-};
+// Mounted in app.ts at '/api/v1/users/:userId/workouts', so '/' here is
+// that path. mergeParams: true lets this router read the parent's :userId
+// (by default a router only sees its own params).
+//
+// Temporary until Phase 3: the owner comes from the URL, which anyone can
+// change. Phase 3 takes the user id from the login token instead.
+const router = Router({ mergeParams: true });
 
-// In-memory "database": just an array. Resets on every restart.
-// Replaced by Postgres in Phase 2.
-const workouts: Workout[] = [
-  {
-    id: crypto.randomUUID(),
-    name: 'Morning run',
-    durationMin: 30,
-    createdAt: new Date().toISOString(),
-  },
-];
+// TS can't see :userId on its own (the parent route sets it), so we
+// declare the params. `id` is optional: list/create routes have no :id.
+type Params = { userId: string; id?: string };
 
-// Validation helpers, shared by POST and PATCH.
-// `unknown` (not `any`) forces us to check the type before using the value.
-// `v is string` tells TypeScript: if this returns true, v is a string.
-// Replaced by Zod in Part B.
-function isValidName(v: unknown): v is string {
-  return typeof v === 'string' && v.trim() !== '';
-}
+const userNotFound = { error: 'User not found' };
+const workoutNotFound = { error: 'Workout not found' };
 
-function isValidDuration(v: unknown): v is number {
-  return typeof v === 'number' && Number.isFinite(v) && v > 0;
-}
+// GET /users/:userId/workouts -> that user's workouts
+router.get<Params>('/', async (req, res) => {
+  const { userId } = req.params;
 
-// A Router is a mini-app. Paths here are relative to where it's mounted
-// in app.ts ('/api/v1/workouts'), so '/' here = '/api/v1/workouts'.
-const router = Router();
+  if (!isValidId(userId)) {
+    res.status(404).json(userNotFound);
+    return;
+  }
 
-// GET /api/v1/workouts -> list all
-router.get('/', (_req, res) => {
-  // res.json() sets Content-Type: application/json. Status defaults to 200.
+  // WHERE user_id = $1 — uses the @@index([userId]) from the schema.
+  // Note: an unknown user returns [] (an empty list is a valid answer).
+  const workouts = await prisma.workout.findMany({
+    where: { userId },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+  });
+
   res.json(workouts);
 });
 
-// GET /api/v1/workouts/:id -> one workout
-// ':id' is a route param. /workouts/abc -> req.params.id === 'abc'
-router.get('/:id', (req, res) => {
-  const workout = workouts.find((w) => w.id === req.params.id);
+// GET /users/:userId/workouts/:id
+router.get<Params>('/:id', async (req, res) => {
+  const { userId, id = '' } = req.params;
+
+  // Filter by id AND owner. `where: { id }` alone would let any user read
+  // any workout by knowing its id (IDOR).
+  const workout =
+    isValidId(userId) && isValidId(id)
+      ? await prisma.workout.findFirst({ where: { id, userId } })
+      : null;
 
   if (!workout) {
-    // 404 = the resource doesn't exist.
-    // `return` stops the handler, so we never send two responses.
-    res.status(404).json({ error: 'Workout not found' });
+    // Same 404 whether the workout doesn't exist or belongs to someone
+    // else — never reveal that another user's workout exists.
+    res.status(404).json(workoutNotFound);
     return;
   }
 
   res.json(workout);
 });
 
-// POST /
-router.post('/', (req, res) => {
+// POST /users/:userId/workouts
+router.post<Params>('/', async (req, res) => {
+  const { userId } = req.params;
+
+  if (!isValidId(userId)) {
+    res.status(404).json(userNotFound);
+    return;
+  }
+
   // Express 5: req.body is undefined when no JSON body is sent.
   const { name, durationMin } = req.body ?? {};
 
@@ -65,33 +80,38 @@ router.post('/', (req, res) => {
     return;
   }
   if (!isValidDuration(durationMin)) {
-    res.status(400).json({ error: 'durationMin must be a positive number' });
+    res.status(400).json({ error: 'durationMin must be a positive integer' });
     return;
   }
 
-  const newWorkout: Workout = {
-    id: crypto.randomUUID(),
-    name: name.trim(),
-    durationMin,
-    createdAt: new Date().toISOString(),
-  };
-
-  workouts.push(newWorkout);
-  res.status(201).json(newWorkout);
+  // No "does the user exist?" query first: the foreign key checks it.
+  // Unknown user -> Postgres rejects the insert -> Prisma P2003.
+  try {
+    const workout = await prisma.workout.create({
+      data: { name: name.trim(), durationMin, userId },
+    });
+    res.status(201).json(workout);
+  } catch (err) {
+    if (isForeignKeyViolation(err)) {
+      res.status(404).json(userNotFound);
+      return;
+    }
+    throw err;
+  }
 });
 
-// PATCH /:id
-router.patch('/:id', (req, res) => {
-  const workout = workouts.find((w) => w.id === req.params.id);
+// PATCH /users/:userId/workouts/:id
+router.patch<Params>('/:id', async (req, res) => {
+  const { userId, id = '' } = req.params;
 
-  if (!workout) {
-    res.status(404).json({ error: 'Workout not found' });
+  if (!isValidId(userId) || !isValidId(id)) {
+    res.status(404).json(workoutNotFound);
     return;
   }
 
   const { name, durationMin } = req.body ?? {};
 
-  // Validate everything first, then apply — so a bad field never
+  // Validate everything first, then write once — a bad field never
   // leaves the workout half-updated.
   // `!== undefined` = "field was sent". Sent but invalid -> 400.
   if (name !== undefined && !isValidName(name)) {
@@ -99,27 +119,49 @@ router.patch('/:id', (req, res) => {
     return;
   }
   if (durationMin !== undefined && !isValidDuration(durationMin)) {
-    res.status(400).json({ error: 'durationMin must be a positive number' });
+    res.status(400).json({ error: 'durationMin must be a positive integer' });
     return;
   }
 
-  if (name !== undefined) workout.name = name.trim();
-  if (durationMin !== undefined) workout.durationMin = durationMin;
-
-  res.json(workout);
+  // One UPDATE ... WHERE id = $1 AND user_id = $2.
+  // Prisma 5+ accepts extra filters next to the unique `id`.
+  // No row matches (missing, or someone else's) -> P2025 -> 404.
+  try {
+    // Fields set to `undefined` are skipped -> only sent fields change.
+    const workout = await prisma.workout.update({
+      where: { id, userId },
+      data: { name: name?.trim(), durationMin },
+    });
+    res.json(workout);
+  } catch (err) {
+    if (isNotFound(err)) {
+      res.status(404).json(workoutNotFound);
+      return;
+    }
+    throw err; // anything else is a real bug -> errorHandler -> 500
+  }
 });
 
-// DELETE /:id
-router.delete('/:id', (req, res) => {
-  const index = workouts.findIndex((w) => w.id === req.params.id);
+// DELETE /users/:userId/workouts/:id
+router.delete<Params>('/:id', async (req, res) => {
+  const { userId, id = '' } = req.params;
 
-  if (index === -1) {
-    res.status(404).json({ error: 'Workout not found' });
+  if (!isValidId(userId) || !isValidId(id)) {
+    res.status(404).json(workoutNotFound);
     return;
   }
 
-  workouts.splice(index, 1);
-  res.status(204).send(); // 204 = No Content
+  // Same pattern as PATCH: DELETE ... WHERE id AND owner; P2025 = no match.
+  try {
+    await prisma.workout.delete({ where: { id, userId } });
+    res.status(204).send(); // 204 = No Content
+  } catch (err) {
+    if (isNotFound(err)) {
+      res.status(404).json(workoutNotFound);
+      return;
+    }
+    throw err;
+  }
 });
 
 export default router;

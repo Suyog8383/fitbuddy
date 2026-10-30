@@ -19,7 +19,11 @@ export const EnvSchema = z.object({
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
     .optional(),
 
-  // Secrets later (Phase 3): NO default, so a missing one fails startup.
+  // Secret -> NO default, so a missing one fails startup.
+  // Must be a postgres:// or postgresql:// URL.
+  DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
+
+  // Secrets later (Phase 3), same rule:
   // JWT_SECRET: z.string().min(32),
 });
 

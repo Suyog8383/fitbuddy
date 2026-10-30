@@ -1,0 +1,51 @@
+// Source of truth for the database.
+// After editing: `npm run db:migrate -- --name what_changed`
+
+generator client {
+  provider            = "prisma-client"
+  // Generated TS client lives in src/ (git-ignored, rebuilt by `prisma generate`).
+  output              = "../src/generated/prisma"
+  // Node native TS: generated imports must end in .ts
+  importFileExtension = "ts"
+  moduleFormat        = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+  // URL comes from prisma.config.ts (DATABASE_URL), not from here.
+}
+
+// Model = singular PascalCase (JS side). Table = plural snake_case (DB side).
+
+model User {
+  id        String   @id @default(uuid()) @db.Uuid
+  // @unique = UNIQUE constraint + index. Duplicate -> Prisma error P2002.
+  email     String   @unique
+  name      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  // Set automatically by Prisma on every update.
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Virtual (no column): the "many" side of User 1 -> N Workout.
+  workouts Workout[]
+
+  @@map("users")
+}
+
+model Workout {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  durationMin Int      @map("duration_min")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Foreign key: the real column, holds the owner's users.id.
+  userId String @map("user_id") @db.Uuid
+  // Virtual: lets code load the owner. onDelete: Cascade = deleting a user
+  // deletes their workouts (account deletion must remove all their data).
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Postgres does NOT index foreign keys automatically.
+  // "All workouts for user X" is our main query -> index it.
+  @@index([userId])
+  @@map("workouts")
+}
