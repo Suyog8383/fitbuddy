@@ -17,7 +17,11 @@ process.env.DATABASE_URL = testDbUrl.toString();
 
 export default defineConfig({
   test: {
-    env: { DATABASE_URL: testDbUrl.toString() },
+    env: {
+      DATABASE_URL: testDbUrl.toString(),
+      // Fixed test-only secret: tests never depend on (or see) the real one.
+      JWT_SECRET: 'test-only-secret-not-used-anywhere-else',
+    },
     // Runs once before all tests: create test DB + apply migrations.
     globalSetup: ['./src/test/globalSetup.ts'],
     // Runs before each test file: helpers like cleaning tables.

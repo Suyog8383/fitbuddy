@@ -8,4 +8,10 @@ const adapter = new PrismaPg({ connectionString: env.DATABASE_URL });
 // ONE client for the whole app. Each PrismaClient opens a connection pool;
 // creating one per request would exhaust Postgres's connection limit.
 // Import this everywhere: `import { prisma } from '../db.ts'`
-export const prisma = new PrismaClient({ adapter });
+export const prisma = new PrismaClient({
+  adapter,
+  // Safe by default: no query returns passwordHash unless it explicitly
+  // asks for it with `omit: { passwordHash: false }` (only login does).
+  // So `res.json(user)` can never leak the hash by accident.
+  omit: { user: { passwordHash: true } },
+});
