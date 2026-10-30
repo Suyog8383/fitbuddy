@@ -17,6 +17,9 @@ export function toUserResponse(user: UserRow) {
     email: user.email,
     name: user.name,
     emailVerifiedAt: user.emailVerifiedAt,
+    // The app shows admin screens for ADMIN. That's UX only — the API
+    // checks the role itself (requireRole).
+    role: user.role,
     createdAt: user.createdAt,
     // null until the first profile PATCH -> app shows onboarding.
     profile: profile
@@ -28,5 +31,19 @@ export function toUserResponse(user: UserRow) {
           units: profile.units,
         }
       : null,
+  };
+}
+
+// What an admin sees about any user. Account info only — NO profile or
+// health data: support work doesn't need someone's weight.
+export function toAdminUserResponse(user: Omit<User, 'passwordHash'>) {
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    emailVerifiedAt: user.emailVerifiedAt,
+    disabledAt: user.disabledAt,
+    createdAt: user.createdAt,
   };
 }

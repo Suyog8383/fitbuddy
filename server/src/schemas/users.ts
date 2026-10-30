@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { FitnessGoal, UnitSystem } from '../generated/prisma/client.ts';
+import { FitnessGoal, Role, UnitSystem } from '../generated/prisma/client.ts';
 import { Password } from './auth.ts';
 import { Name } from './common.ts';
 
@@ -53,4 +53,16 @@ export const ChangePasswordBody = z.object({
   currentPassword: z.string(),
   // Same rules as register and reset.
   newPassword: Password,
+});
+
+// GET /admin/users?email=... — query values are always strings (or arrays
+// for ?email=a&email=b, which fails here -> 400).
+export const AdminUsersQuery = z.object({
+  email: z.string().trim().min(1).optional(),
+});
+
+// PATCH /admin/users/:id — only these two things, nothing else about a user.
+export const AdminUpdateUserBody = z.object({
+  role: z.enum(Role).optional(),
+  disabled: z.boolean().optional(),
 });

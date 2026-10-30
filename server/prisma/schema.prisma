@@ -15,6 +15,13 @@ datasource db {
   // URL comes from prisma.config.ts (DATABASE_URL), not from here.
 }
 
+enum Role {
+  USER
+  ADMIN
+
+  @@map("role")
+}
+
 // Model = singular PascalCase (JS side). Table = plural snake_case (DB side).
 
 model User {
@@ -28,6 +35,12 @@ model User {
   passwordHash    String    @map("password_hash")
   // null = not verified yet. A timestamp also records WHEN it happened.
   emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz
+  // Every new user is a USER. ADMIN only via the make-admin script or
+  // another admin — never through a self-service endpoint.
+  role            Role      @default(USER)
+  // null = active. Set by an admin: no login, no refresh. Reversible,
+  // data kept (unlike account deletion).
+  disabledAt      DateTime? @map("disabled_at") @db.Timestamptz
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
   // Set automatically by Prisma on every update.
   updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz

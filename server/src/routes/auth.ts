@@ -117,6 +117,10 @@ router.post('/login', async (req, res) => {
     throw new HttpError(401, 'Invalid email or password');
   }
 
+  // Checked only AFTER the password: otherwise anyone could probe which
+  // accounts are disabled. 403: who you are is fine, you just can't log in.
+  if (user.disabledAt) throw new HttpError(403, 'Account disabled');
+
   // The app stores both in expo-secure-store.
   // accessToken: sent on every request (`Authorization: Bearer ...`), 15 min.
   // refreshToken: sent ONLY to /auth/refresh and /auth/logout, 30 days.
@@ -145,6 +149,17 @@ router.post('/refresh', async (req, res) => {
       req.log.debug({ reason: result.reason }, 'refresh rejected');
     }
     // One answer for every failure: the client just logs the user out.
+    throw new HttpError(401, 'Invalid refresh token');
+  }
+
+  // Disabling revokes all tokens, so this is a second line of defence
+  // (e.g. a token rotated at the same moment as the disable). Same 401 as
+  // any bad token: the app logs out.
+  const owner = await prisma.user.findUnique({
+    where: { id: result.userId },
+    select: { disabledAt: true },
+  });
+  if (!owner || owner.disabledAt) {
     throw new HttpError(401, 'Invalid refresh token');
   }
 

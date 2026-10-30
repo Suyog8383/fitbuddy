@@ -129,7 +129,15 @@ describe('profile: GET + PATCH /api/v1/users/me', () => {
     const res = await getMe();
 
     expect(Object.keys(res.body).sort()).toEqual(
-      ['createdAt', 'email', 'emailVerifiedAt', 'id', 'name', 'profile'].sort(),
+      [
+        'createdAt',
+        'email',
+        'emailVerifiedAt',
+        'id',
+        'name',
+        'profile',
+        'role',
+      ].sort(),
     );
     expect(res.body.profile).toBeNull();
   });
@@ -241,6 +249,16 @@ describe('profile: GET + PATCH /api/v1/users/me', () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual(before);
+  });
+
+  // The whole point of "no self-service role changes".
+  it('cannot make yourself an admin', async () => {
+    const res = await patch({ role: 'ADMIN' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.role).toBe('USER');
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    expect(row.role).toBe('USER');
   });
 
   it('deleting the account deletes the profile (cascade)', async () => {

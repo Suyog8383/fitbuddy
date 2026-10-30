@@ -1,6 +1,7 @@
 import express from 'express';
 import { pinoHttp } from 'pino-http';
 import { logger } from './logger.ts';
+import adminRouter from './routes/admin.ts';
 import authRouter from './routes/auth.ts';
 import usersRouter from './routes/users.ts';
 import workoutsRouter from './routes/workouts.ts';
@@ -59,6 +60,8 @@ app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/users', usersRouter);
 // Protected: the owner comes from the access token (requireAuth).
 app.use('/api/v1/workouts', workoutsRouter);
+// Admin only (requireAuth + requireRole inside the router).
+app.use('/api/v1/admin', adminRouter);
 
 // Order matters: these go last.
 // 1. No route matched -> 404 JSON.
