@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import app from '../app.ts';
 import { prisma } from '../db.ts';
+import { createUser } from '../test/factories.ts';
 
 // Tests run against the fitbuddy_test database, emptied before each test
 // (src/test/setup.ts). Each test creates the data it needs.
@@ -22,9 +23,7 @@ let userId: string;
 let url: string; // /api/v1/users/<userId>/workouts
 
 beforeEach(async () => {
-  const user = await prisma.user.create({
-    data: { email: 'owner@test.com', name: 'Owner' },
-  });
+  const user = await createUser();
   userId = user.id;
   url = `/api/v1/users/${userId}/workouts`;
 });
@@ -82,9 +81,7 @@ describe('GET /users/:userId/workouts', () => {
     const first = await createWorkout({ name: 'Run', durationMin: 30 });
     const second = await createWorkout({ name: 'Swim', durationMin: 45 });
     // Another user's workout must not appear.
-    const other = await prisma.user.create({
-      data: { email: 'other@test.com', name: 'Other' },
-    });
+    const other = await createUser();
     await prisma.workout.create({
       data: { name: 'Not mine', durationMin: 10, userId: other.id },
     });
@@ -205,9 +202,7 @@ describe("another user's workout (IDOR)", () => {
 
   beforeEach(async () => {
     aWorkout = await createWorkout({ name: "A's run", durationMin: 30 });
-    const userB = await prisma.user.create({
-      data: { email: 'b@test.com', name: 'B' },
-    });
+    const userB = await createUser();
     bUrl = `/api/v1/users/${userB.id}/workouts/${aWorkout.id}`;
   });
 

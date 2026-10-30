@@ -12,9 +12,11 @@ export default defineConfig(
   {
     rules: {
       // `_name` = unused on purpose (e.g. Express error handler's `next`).
+      // ignoreRestSiblings: `const { secret, ...rest } = obj` is the way
+      // to drop a field, so `secret` being unused is fine.
       '@typescript-eslint/no-unused-vars': [
         'error',
-        { argsIgnorePattern: '^_' },
+        { argsIgnorePattern: '^_', ignoreRestSiblings: true },
       ],
     },
   },

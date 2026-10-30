@@ -1,6 +1,7 @@
 import express from 'express';
 import { pinoHttp } from 'pino-http';
 import { logger } from './logger.ts';
+import authRouter from './routes/auth.ts';
 import usersRouter from './routes/users.ts';
 import workoutsRouter from './routes/workouts.ts';
 import { notFound } from './middleware/notFound.ts';
@@ -54,6 +55,7 @@ app.get('/health', (_req, res) => {
 
 // Mount the router: every path inside it is prefixed with /api/v1/workouts.
 // /v1 = API version, so a breaking change later can go to /v2.
+app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/users', usersRouter);
 // Nested: workouts belong to a user (1 -> N).
 app.use('/api/v1/users/:userId/workouts', workoutsRouter);
