@@ -1,5 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import express from 'express';
+import { pino } from 'pino';
+import { pinoHttp } from 'pino-http';
 import request from 'supertest';
 import app from './app.ts';
 import { errorHandler } from './middleware/errorHandler.ts';
@@ -45,23 +47,35 @@ describe('errorHandler', () => {
   it('returns generic 500 JSON for a thrown error, without leaking details', async () => {
     // Tiny throwaway app with a route that crashes, so the real app
     // doesn't need a test-only /boom route.
+    // errorHandler uses req.log, which only exists if pino-http ran.
+    // Give pino a fake "stream" that collects log lines in an array,
+    // so we can check what was logged.
+    const lines: string[] = [];
+    const testLogger = pino(
+      { level: 'error' },
+      { write: (line: string) => lines.push(line) },
+    );
+
     const testApp = express();
+    testApp.use(pinoHttp({ logger: testLogger }));
     testApp.get('/boom', () => {
       throw new Error('secret internal detail');
     });
     testApp.use(errorHandler);
 
-    // errorHandler logs 500s with console.error. Silence it so test
-    // output stays clean, and check it was called.
-    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
     const res = await request(testApp).get('/boom');
 
+    // Client: generic message only.
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: 'Internal server error' });
     expect(JSON.stringify(res.body)).not.toContain('secret');
-    expect(spy).toHaveBeenCalledOnce();
 
-    spy.mockRestore();
+    // Logs: full error with stack, tagged with the request id.
+    const logged = lines
+      .map((line) => JSON.parse(line))
+      .find((log) => log.msg === 'unhandled error');
+    expect(logged.err.message).toBe('secret internal detail');
+    expect(logged.err.stack).toEqual(expect.any(String));
+    expect(logged.req.id).toBeDefined();
   });
 });

@@ -5,7 +5,7 @@ import type { NextFunction, Request, Response } from 'express';
 // Must be added last in app.ts.
 export function errorHandler(
   err: unknown,
-  _req: Request,
+  req: Request,
   res: Response,
   _next: NextFunction,
 ) {
@@ -21,6 +21,8 @@ export function errorHandler(
 
   // Unexpected error = a bug. Full details in our logs only;
   // the client gets a generic message (never err.message or the stack).
-  console.error(err);
+  // req.log (from pino-http) tags the line with this request's id.
+  // Pass err as { err } so pino keeps the stack trace.
+  req.log.error({ err }, 'unhandled error');
   res.status(500).json({ error: 'Internal server error' });
 }
