@@ -1,8 +1,8 @@
 import app from './app.ts';
+import { env } from './env.ts';
 
-// Read the port from .env (strings only, so convert). Zod validation comes in Part B.
-const PORT = Number(process.env.PORT) || 3000;
-
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+app.listen(env.PORT, () => {
+  console.log(
+    `${env.APP_NAME} running on http://localhost:${env.PORT} (${env.NODE_ENV})`,
+  );
 });
