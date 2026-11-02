@@ -26,7 +26,7 @@ and become a full-stack developer.
 
 | Layer      | Tech                                              |
 |------------|---------------------------------------------------|
-| Mobile     | Expo (dev build), React Query, expo-secure-store  |
+| Mobile     | Expo (dev build), openapi-fetch + generated types, React Query, expo-secure-store |
 | Backend    | Node.js 24, Express, TypeScript (native type stripping) |
 | Database   | PostgreSQL + Prisma                               |
 | Cache/Jobs | Redis, BullMQ                                     |
@@ -60,7 +60,7 @@ fitbuddy/
 | 2  | Database           | Postgres in Docker, schema design, Prisma, migrations, relations    | 2     | [x]  |
 | 3  | Authentication     | bcrypt, JWT access + refresh tokens, rotation, logout, email verification, password reset | 2 | [x] |
 | 4  | User management    | Profiles, roles (RBAC), admin routes, Zod validation, error handling, account deletion, OpenAPI docs | 2 | [x] |
-| 5  | Mobile ↔ API       | Axios, React Query, secure-store, Expo SDK upgrade + dev build, biometric unlock, Google + Apple sign-in | 2 | [ ] |
+| 5  | Mobile ↔ API       | openapi-fetch + openapi-typescript, React Query, secure-store, Expo SDK upgrade + dev build, biometric unlock, Google + Apple sign-in | 2 | [ ] |
 | 6  | Testing            | Test database, integration test patterns, mocking external services, coverage | 1 | [ ] |
 | 7  | File uploads       | Avatars, multer, S3/Cloudinary, signed URLs                         | 1     | [ ]  |
 | 8  | Health data        | Health Connect / HealthKit, sync API, bulk inserts, time-series queries, indexes | 3 | [ ] |
