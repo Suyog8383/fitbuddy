@@ -1,0 +1,43 @@
+# Render Blueprint = infrastructure as code: Render reads this file from
+# the repo and creates/updates the service to match it.
+# Docs: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: fitbuddy-api
+    runtime: docker # build server/Dockerfile, like we do locally
+    plan: free # 0.1 CPU, 512 MB, sleeps after 15 min idle
+    region: singapore # closest to India; same region as the Neon DB. Can't change later.
+
+    # Monorepo: build only the server folder, and only redeploy when it
+    # changes (a mobile-only commit doesn't restart the API).
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: ./server
+    buildFilter:
+      paths:
+        - server/**
+
+    # Free plan has no pre-deploy step -> migrate on container start.
+    dockerCommand: sh ./start-with-migrations.sh
+
+    # Render waits for 200 here before sending traffic to a new deploy.
+    healthCheckPath: /health
+    autoDeployTrigger: commit # every push to the branch = a deploy
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_ENV
+        value: dev # keeps /docs on
+      - key: TRUST_PROXY_HOPS
+        value: "1" # Render's proxy (re-check before rate limiting, Phase 14)
+      # Secrets. Never in this file:
+      # generateValue = Render creates a random 256-bit value once.
+      - key: JWT_SECRET
+        generateValue: true
+      # sync: false = Render asks you for the value in the dashboard
+      # when the Blueprint is first created.
+      - key: DATABASE_URL # Neon, DIRECT (non-pooled) connection string
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      # PORT is set by Render itself (10000); env.ts reads it.

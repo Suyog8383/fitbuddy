@@ -25,6 +25,7 @@ RUN DATABASE_URL=postgresql://build:build@localhost:5432/build \
 
 # 2. Our code (tests, .env, node_modules excluded by .dockerignore).
 COPY src ./src
+COPY start-with-migrations.sh ./
 
 # Don't run as root: if someone breaks into the app, they get a
 # powerless user. The official Node image ships one called `node`.
@@ -35,10 +36,12 @@ USER node
 EXPOSE 3000
 
 # Docker asks "are you alive?" every 10 s. fetch() is built into Node,
-# so no curl needed in the image.
+# so no curl needed in the image. PORT: hosts like Render pick their own.
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
-  CMD ["node", "-e", "fetch('http://localhost:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+  CMD ["node", "-e", "fetch('http://localhost:' + (process.env.PORT || 3000) + '/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
 
 # Exec form (a JSON array): node is the main process and gets SIGTERM
 # directly. `npm start` would sit in between and not pass it on.
+# Default = server only (deploy/compose.yml migrates in its own job).
+# Render overrides it with start-with-migrations.sh (see render.yaml).
 CMD ["node", "src/index.ts"]
