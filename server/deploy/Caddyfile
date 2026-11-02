@@ -1,0 +1,13 @@
+# Caddy = the front door. For a hostname like 13-233-1-2.sslip.io it gets
+# a free HTTPS certificate from Let's Encrypt, renews it, and redirects
+# http -> https, all automatically.
+# SITE_ADDRESS comes from .env (`:80` = plain HTTP on any host, for a
+# local test without a certificate).
+{$SITE_ADDRESS} {
+	# Compress JSON responses.
+	encode zstd gzip
+
+	# Forward everything to the API container. Caddy adds the
+	# X-Forwarded-For header that TRUST_PROXY_HOPS=1 reads.
+	reverse_proxy server:3000
+}

@@ -13,6 +13,11 @@ import { errorHandler } from './middleware/errorHandler.ts';
 
 const app = express();
 
+// Behind Caddy, every request comes FROM Caddy. Trusting N proxy hops lets
+// req.ip / req.protocol use the real client's values (X-Forwarded-*).
+// Needed for rate limiting by IP later. 0 locally (no proxy).
+app.set('trust proxy', env.TRUST_PROXY_HOPS);
+
 // Middleware: runs on every request, in the order added.
 
 // Request logging — first, so every request is logged, even ones that
@@ -66,10 +71,10 @@ app.use('/api/v1/workouts', workoutsRouter);
 // Admin only (requireAuth + requireRole inside the router).
 app.use('/api/v1/admin', adminRouter);
 
-// API docs, outside production for now (Phase 15 decides). Hiding docs is
+// API docs on local + dev servers, off on prod (Phase 15 decides). Hiding docs is
 // not security — auth + roles protect the API. Swagger UI also needs
 // inline scripts, which Helmet's CSP (Phase 14) would block.
-if (env.NODE_ENV !== 'production') {
+if (env.APP_ENV !== 'prod') {
   app.get('/openapi.json', (_req, res) => {
     res.json(openApiDocument);
   });

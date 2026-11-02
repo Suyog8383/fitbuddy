@@ -1,0 +1,22 @@
+# What `docker build` must NOT send into the image.
+# Secrets: never baked into an image (anyone with the image could read them).
+.env
+.env.*
+
+# Rebuilt inside the image (Linux binaries, not the Mac ones).
+node_modules
+src/generated
+
+# Not needed to run the server.
+**/*.test.ts
+src/test
+deploy
+coverage
+Dockerfile
+.dockerignore
+docker-compose.yml
+eslint.config.js
+vitest.config.ts
+tsconfig.json
+.prettierrc
+.prettierignore

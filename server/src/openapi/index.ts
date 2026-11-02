@@ -1,5 +1,4 @@
 import { createDocument } from 'zod-openapi';
-import { env } from '../env.ts';
 import { adminPaths } from './admin.ts';
 import { authPaths } from './auth.ts';
 import { healthPaths } from './health.ts';
@@ -40,8 +39,9 @@ export const openApiDocument = createDocument({
     contact: { name: 'FitBuddy', email: 'support@example.com' },
     license: { name: 'ISC' },
   },
-  // The "Servers" dropdown. Deployed environments are added in Phase 15.
-  servers: [{ url: `http://localhost:${env.PORT}`, description: 'Local' }],
+  // Relative URL = "the server showing these docs". Try it out then works
+  // on localhost AND on the dev server, without listing every host.
+  servers: [{ url: '/', description: 'This server' }],
   // Order here = order of sections on the page.
   tags: [
     { name: 'Health', description: 'Server status' },

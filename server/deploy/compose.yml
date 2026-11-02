@@ -1,0 +1,91 @@
+# The whole dev-server stack: Postgres + migrations + API + Caddy (HTTPS).
+# Lives on the EC2 machine next to a .env file (see .env.example).
+#   docker compose up -d          start / update everything
+#   docker compose logs -f server follow the API logs
+#   docker compose ps             what's running + health
+# ${VAR:?msg} = refuse to start if VAR is missing from .env.
+name: fitbuddy
+
+# Same connection string for `migrate` and `server`. `postgres` = the
+# service name below: Compose gives every service a DNS name on its
+# private network. Password must be URL-safe (openssl rand -hex).
+x-database-url: &database-url postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+
+services:
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+    # Data on a named volume: survives container restarts and redeploys.
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # NO `ports:` on purpose. Only containers in this stack can reach the
+    # database; it never listens on the machine's public IP.
+
+  # One-shot job: apply new migrations, then exit. Runs on every `up`.
+  # `migrate deploy` only applies pending migrations, never resets data.
+  migrate:
+    image: ${SERVER_IMAGE:?set SERVER_IMAGE in .env}
+    command: ['npx', 'prisma', 'migrate', 'deploy']
+    environment:
+      DATABASE_URL: *database-url
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+
+  server:
+    image: ${SERVER_IMAGE:?set SERVER_IMAGE in .env}
+    restart: unless-stopped
+    # Tiny init process as PID 1: forwards signals, cleans up zombies.
+    init: true
+    environment:
+      NODE_ENV: production
+      APP_ENV: ${APP_ENV:?set APP_ENV in .env}
+      TRUST_PROXY_HOPS: 1 # Caddy
+      DATABASE_URL: *database-url
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      RESEND_API_KEY: ${RESEND_API_KEY:?set RESEND_API_KEY in .env}
+      EMAIL_FROM: ${EMAIL_FROM:-FitBuddy <onboarding@resend.dev>}
+    # Start only after the DB is up AND migrations succeeded:
+    # never run new code against an old schema.
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # No `ports:` either: only Caddy reaches it, as http://server:3000.
+
+  caddy:
+    image: caddy:2.11.7-alpine
+    restart: unless-stopped
+    # The only ports open to the outside. 80 is needed for the Let's
+    # Encrypt check + redirecting http -> https. 443/udp = HTTP/3.
+    ports:
+      - '${HTTP_PORT:-80}:80'
+      - '${HTTPS_PORT:-443}:443'
+      - '${HTTPS_PORT:-443}:443/udp'
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?set SITE_ADDRESS in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates live here. Keep them: Let's Encrypt rate-limits
+      # how often you can get a new one.
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      server:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  caddy-data:
+  caddy-config:

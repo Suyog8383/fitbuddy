@@ -27,6 +27,8 @@ describe('EnvSchema', () => {
       NODE_ENV: 'development',
       PORT: 3000,
       APP_NAME: 'FitBuddy',
+      APP_ENV: 'local',
+      TRUST_PROXY_HOPS: 0,
       EMAIL_FROM: 'FitBuddy <onboarding@resend.dev>',
     });
   });
@@ -41,6 +43,19 @@ describe('EnvSchema', () => {
     expect(result.success).toBe(true);
   });
 
+  it('accepts a dev deployment: production mode + APP_ENV=dev behind 1 proxy', () => {
+    const result = EnvSchema.safeParse({
+      ...BASE,
+      NODE_ENV: 'production',
+      APP_ENV: 'dev',
+      TRUST_PROXY_HOPS: '1',
+      RESEND_API_KEY: 're_test_key',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.TRUST_PROXY_HOPS).toBe(1);
+  });
+
   it('accepts a valid LOG_LEVEL', () => {
     const result = EnvSchema.safeParse({ ...BASE, LOG_LEVEL: 'debug' });
 
@@ -53,6 +68,8 @@ describe('EnvSchema', () => {
     ['PORT above max', { ...BASE, PORT: '70000' }],
     ['NODE_ENV not allowed', { ...BASE, NODE_ENV: 'prod' }],
     ['LOG_LEVEL not allowed', { ...BASE, LOG_LEVEL: 'loud' }],
+    ['APP_ENV not allowed', { ...BASE, APP_ENV: 'production' }],
+    ['TRUST_PROXY_HOPS negative', { ...BASE, TRUST_PROXY_HOPS: '-1' }],
     ['DATABASE_URL missing', { ...BASE, DATABASE_URL: undefined }],
     [
       'DATABASE_URL not postgres',

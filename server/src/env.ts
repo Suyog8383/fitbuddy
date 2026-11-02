@@ -15,6 +15,16 @@ export const EnvSchema = z
 
     APP_NAME: z.string().min(1).default('FitBuddy'),
 
+    // WHICH deployment this is. NODE_ENV says HOW the code runs (prod mode =
+    // fast, safe); a dev server runs NODE_ENV=production + APP_ENV=dev.
+    // Use APP_ENV for "dev-only" features (API docs), not NODE_ENV.
+    APP_ENV: z.enum(['local', 'dev', 'prod']).default('local'),
+
+    // How many proxies sit in front of us (Caddy = 1). Express then reads
+    // the real client IP from X-Forwarded-For. 0 = trust nobody (local):
+    // anyone can fake that header, so only trust proxies we really run.
+    TRUST_PROXY_HOPS: z.coerce.number().int().min(0).default(0),
+
     // Optional override. If unset, logger.ts picks a default per NODE_ENV.
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
